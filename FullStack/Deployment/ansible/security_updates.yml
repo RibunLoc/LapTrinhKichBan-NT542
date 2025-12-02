@@ -1,0 +1,14 @@
+- name: Vá bảo mật định kỳ
+  hosts: droplets
+  become: yes
+
+  tasks:
+    - name: Update cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Dist upgrade toàn bộ gói
+      apt:
+        upgrade: dist
+        autoremove: yes

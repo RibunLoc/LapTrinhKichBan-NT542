@@ -34,4 +34,7 @@ Thư mục này gom các phương pháp/đoạn code cốt lõi đã có trong r
 - Ansible áp chính sách hệ điều hành (nâng cấp, patch, SSH hardening, LUKS).
 - Bash/`doctl` phục vụ dọn SSH key và bucket Spaces dư thừa dựa trên allowlist/state.
 
+## 7) Gói triển khai đầy đủ một chỗ
+- Thư mục [`FullStack/Deployment`](./Deployment) chứa Terraform + Ansible + Bash đóng gói theo sơ đồ (VPC → Droplet/backup/monitoring → Firewall → Volume LUKS → Spaces private + lifecycle + CDN → alerting), thuận tiện để áp dụng toàn bộ thay vì từng phần lẻ.
+
 > Bạn có thể clone thư mục này để tiện tra cứu nhanh khi làm việc theo sơ đồ; mọi file tham chiếu nằm ở các thư mục gốc tương ứng.

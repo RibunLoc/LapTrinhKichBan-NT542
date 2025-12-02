@@ -1,0 +1,62 @@
+- name: Mã hóa volume bằng LUKS và mount /data
+  hosts: droplets
+  become: yes
+  vars:
+    luks_device: "/dev/disk/by-id/scsi-0DO_Volume_${inventory_hostname}-data"
+    luks_name: "securedata"
+    mount_point: "/data"
+
+  tasks:
+    - name: Cài đặt cryptsetup và util-linux
+      apt:
+        name:
+          - cryptsetup
+          - util-linux
+        state: present
+        update_cache: yes
+
+    - name: Tạo LUKS container nếu chưa có
+      command: "cryptsetup luksFormat --batch-mode --type luks2 {{ luks_device }}"
+      args:
+        creates: "/etc/crypttab"
+      register: luks_format
+      ignore_errors: yes
+      changed_when: luks_format.rc == 0
+
+    - name: Mở LUKS device
+      command: "cryptsetup open {{ luks_device }} {{ luks_name }}"
+      register: luks_open
+      failed_when: luks_open.rc not in [0, 5]
+      changed_when: luks_open.rc == 0
+
+    - name: Tạo filesystem ext4 nếu chưa có
+      filesystem:
+        fstype: ext4
+        dev: "/dev/mapper/{{ luks_name }}"
+
+    - name: Tạo mountpoint
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount volume
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/mapper/{{ luks_name }}"
+        fstype: ext4
+        state: mounted
+
+    - name: Thêm vào /etc/crypttab
+      lineinfile:
+        path: /etc/crypttab
+        line: "{{ luks_name }} {{ luks_device }} none luks"
+        create: yes
+
+    - name: Thêm vào /etc/fstab
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/mapper/{{ luks_name }}"
+        fstype: ext4
+        opts: defaults
+        state: present

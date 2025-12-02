@@ -1,0 +1,11 @@
+do_token           = "dop_v1_xxx"
+ssh_key_ids        = [123456]
+spaces_bucket_name = "my-app-assets"
+region             = "sgp1"
+spaces_region      = "sgp1"
+admin_cidrs        = ["203.0.113.10/32"]
+owner              = "team-ops"
+environment        = "prod"
+cdn_custom_domain  = "cdn.example.com"
+alert_emails       = ["ops@example.com"]
+slack_webhook_url  = "https://hooks.slack.com/services/T000/B000/XXXX"

@@ -2,6 +2,8 @@
 
 Kho lưu trữ tổng hợp các đoạn code cốt lõi dùng để tự động hóa những bước chính trong Chương 2. Mỗi mục bên dưới gồm phần giải thích ngắn gọn trước khi trích dẫn đoạn cấu hình/skript minh họa.
 
+> Muốn dựng nhanh toàn bộ sơ đồ (VPC → Droplet/backup/monitoring → Firewall → Volume LUKS → Spaces private + lifecycle + CDN → alerting), xem gói IaC + Ansible trọn bộ tại [`FullStack/Deployment`](./FullStack/Deployment).
+
 ## 2.1 Droplet
 
 ### 2.1.1 Bật backup cho mọi Droplet chuẩn
