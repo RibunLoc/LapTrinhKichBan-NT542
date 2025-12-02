@@ -1,4 +1,4 @@
-- name: Ấp bản vá bảo mật định kỳ 
+- name: Áp bản vá bảo mật định kỳ
   hosts: droplets
   become: yes
 
@@ -8,8 +8,7 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Nâng cấp tất cả gói (bao gồm cả security )
+    - name: Nâng cấp tất cả gói (bao gồm cả security)
       apt:
         upgrade: dist
         autoremove: yes
-    
