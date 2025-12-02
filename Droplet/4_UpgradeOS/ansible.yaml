@@ -1,0 +1,25 @@
+- name: Upgrade OS on Droplets
+  hosts: droplets
+  become: yes
+
+  pre_tasks:
+    - name: Trước khi nâng cấp, kiểm tra đã bật backup chưa (chỉ log, logic thật có thể call API/label)
+      debug:
+        msg: "Đảm bảo Droplet này đã có backup (control 2.1.1) trước khi upgrade OS."
+  
+  tasks:
+    - name: Update package index
+      apt:
+        update_cache: yes
+    
+    - name: Cài đặt update-manager-core nếu thiếu
+      apt:
+        name: update-manager-core
+        state: present
+      
+    - name: Chạy do-release-upgrade (non-interactive)
+      command: do-release-upgrade -f DistUpgradeViewNonInteractive
+      register: upgrade_result
+      changed_when: "'No new release found' not in upgrade_result.stderr"
+    
+# run ansible-playbook -i inventory upgrade_os.yml 
