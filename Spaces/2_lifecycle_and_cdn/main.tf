@@ -12,28 +12,90 @@ provider "aws" {
   }
 }
 
-resource "aws_s3_bucket" "logs" {
-  bucket = "chapter2-logs"
-  acl    = "private"
+# Dùng DO provider để tạo CDN endpoint liền kề bucket (source of truth trong IaC)
+provider "digitalocean" {
+  token = var.digitalocean_token
 }
 
-# Chính sách vòng đời: giữ 30 ngày, xóa sau đó
-resource "aws_s3_bucket_lifecycle_configuration" "logs_lifecycle" {
-  bucket = aws_s3_bucket.logs.bucket
+# Định nghĩa chung cho mọi bucket Spaces: private, có lifecycle và policy deny ngoài allowlist
+locals {
+  office_cidr = "203.0.113.0/24"
 
-  rule {
-    id     = "expire-logs"
-    status = "Enabled"
+  buckets = {
+    "chapter2-logs" = {
+      region      = "sgp1"
+      expire_days = 30
+      enable_cdn  = true
+      ttl_seconds = 3600
+    }
 
-    expiration {
-      days = 30
+    "chapter2-backups" = {
+      region      = "sgp1"
+      expire_days = 90
+      enable_cdn  = false
+      ttl_seconds = null
     }
   }
 }
 
-# CDN cho bucket Spaces
-resource "digitalocean_cdn" "logs_cdn" {
-  origin        = "${aws_s3_bucket.logs.bucket}.sgp1.digitaloceanspaces.com"
-  ttl           = 3600
-  certificate_name = "lets-encrypt-auto" # ví dụ placeholder, dùng DO cert nếu có
+resource "aws_s3_bucket" "bucket" {
+  for_each = local.buckets
+
+  bucket = each.key
+  acl    = "private" # 2.3.4 đảm bảo bucket private, hạn chế liệt kê
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "lifecycle" {
+  for_each = local.buckets
+
+  bucket = aws_s3_bucket.bucket[each.key].bucket
+
+  rule {
+    id     = "expire-after-${each.value.expire_days}-days"
+    status = "Enabled"
+
+    expiration {
+      days = each.value.expire_days # 2.3.3 tự động xóa sau X ngày
+    }
+  }
+}
+
+resource "digitalocean_spaces_bucket_policy" "deny_not_office" {
+  for_each = local.buckets
+
+  region = each.value.region
+  bucket = aws_s3_bucket.bucket[each.key].bucket
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyIfNotFromOfficeIP"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          "arn:aws:s3:::${aws_s3_bucket.bucket[each.key].bucket}",
+          "arn:aws:s3:::${aws_s3_bucket.bucket[each.key].bucket}/*"
+        ]
+        Condition = {
+          NotIpAddress = {
+            "aws:SourceIp" = local.office_cidr
+          }
+        }
+      }
+    ]
+  })
+}
+
+# 2.3.5 Bật CDN với TTL chuẩn hóa cho bucket cần CDN
+resource "digitalocean_cdn" "bucket_cdn" {
+  for_each = {
+    for name, cfg in local.buckets : name => cfg
+    if cfg.enable_cdn
+  }
+
+  origin           = "${aws_s3_bucket.bucket[each.key].bucket}.${local.buckets[each.key].region}.digitaloceanspaces.com"
+  ttl              = each.value.ttl_seconds
+  certificate_name = "lets-encrypt-auto" # placeholder, thay bằng cert thật nếu có
 }

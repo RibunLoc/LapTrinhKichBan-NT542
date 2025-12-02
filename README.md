@@ -208,94 +208,77 @@ resource "digitalocean_monitoring_alert_policy" "cpu_high" {
 ## 2.3 Spaces
 
 ### 2.3.3 Thiết lập chính sách vòng đời bucket
-Dùng Terraform (AWS provider trỏ endpoint Spaces) để tạo bucket và rule tự xóa object sau 30 ngày.
+Khai báo lifecycle rule trong Terraform để mọi bucket đều xóa object sau X ngày (IaC là source of truth). Xem `Spaces/2_lifecycle_and_cdn/main.tf`.
 ```hcl
-provider "aws" {
-  region                      = "us-east-1"
-  access_key                  = var.spaces_access_id
-  secret_key                  = var.spaces_secret_key
-  skip_credentials_validation = true
-  skip_requesting_account_id  = true
-  s3_force_path_style         = true
-
-  endpoints {
-    s3 = "https://sgp1.digitaloceanspaces.com"
+locals {
+  buckets = {
+    "chapter2-logs" = { expire_days = 30 }
   }
 }
 
-resource "aws_s3_bucket" "logs" {
-  bucket = "chapter2-logs"
-  acl    = "private"
-}
+resource "aws_s3_bucket_lifecycle_configuration" "lifecycle" {
+  for_each = local.buckets
 
-resource "aws_s3_bucket_lifecycle_configuration" "logs_lifecycle" {
-  bucket = aws_s3_bucket.logs.bucket
-
+  bucket = aws_s3_bucket.bucket[each.key].bucket
   rule {
-    id     = "expire-logs"
+    id     = "expire-after-${each.value.expire_days}-days"
     status = "Enabled"
-
-    expiration {
-      days = 30
-    }
+    expiration { days = each.value.expire_days }
   }
 }
 ```
 
 ### 2.3.4 Mặc định bucket private, hạn chế liệt kê
-Khai báo bucket ACL private và policy deny ngoại trừ dải IP văn phòng.
+Bucket luôn `acl = "private"` và thêm bucket policy deny toàn bộ truy cập nếu không đến từ dải IP văn phòng (hoặc VPC endpoint). Xem `Spaces/2_lifecycle_and_cdn/main.tf`.
 ```hcl
-resource "digitalocean_spaces_bucket" "spaces_cis" {
-  name   = "cis-benchmark-spaces"
-  region = "sgp1"
+resource "aws_s3_bucket" "bucket" {
+  for_each = local.buckets
+  bucket = each.key
   acl    = "private"
 }
 
-resource "digitalocean_spaces_bucket_policy" "spaces_cis_policy" {
-  region = digitalocean_spaces_bucket.spaces_cis.region
-  bucket = digitalocean_spaces_bucket.spaces_cis.name
+resource "digitalocean_spaces_bucket_policy" "deny_not_office" {
+  for_each = local.buckets
+  bucket = aws_s3_bucket.bucket[each.key].bucket
+  region = local.buckets[each.key].region
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "DenyIfNotFromOfficeIP"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:*"
-        Resource = [
-          "arn:aws:s3:::${digitalocean_spaces_bucket.spaces_cis.name}",
-          "arn:aws:s3:::${digitalocean_spaces_bucket.spaces_cis.name}/*"
-        ]
-        Condition = {
-          NotIpAddress = {
-            "aws:SourceIp" = "203.0.113.0/24" # Dải IP được phép truy cập
-          }
-        }
-      }
-    ]
+    Statement = [{
+      Sid       = "DenyIfNotFromOfficeIP"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = ["arn:aws:s3:::${bucket}", "arn:aws:s3:::${bucket}/*"]
+      Condition = { NotIpAddress = { "aws:SourceIp" = local.office_cidr } }
+    }]
   })
 }
 ```
 
 ### 2.3.5 Bật CDN cho Spaces với TTL chuẩn hóa
-Tạo CDN endpoint trỏ trực tiếp tới bucket và set TTL 1 giờ.
+Terraform tạo CDN endpoint song song với bucket và đặt TTL 1 giờ để tránh lệch cấu hình thủ công. Xem `Spaces/2_lifecycle_and_cdn/main.tf`.
 ```hcl
-resource "digitalocean_cdn" "logs_cdn" {
-  origin           = "${aws_s3_bucket.logs.bucket}.sgp1.digitaloceanspaces.com"
-  ttl              = 3600
-  certificate_name = "lets-encrypt-auto" # placeholder, thay bằng cert thật nếu có
+resource "digitalocean_cdn" "bucket_cdn" {
+  for_each = { for name, cfg in local.buckets : name => cfg if cfg.enable_cdn }
+
+  origin = "${aws_s3_bucket.bucket[each.key].bucket}.${local.buckets[each.key].region}.digitaloceanspaces.com"
+  ttl    = each.value.ttl_seconds
 }
 ```
 
 ### 2.3.7 Xác định và xóa bucket không cần thiết
-Script so sánh danh sách bucket thực tế với file IaC (`wanted_buckets.txt`) để phát hiện bucket dư thừa trước khi xóa.
+Script đọc danh sách bucket từ Terraform state (hoặc allowlist) rồi so sánh với thực tế để phát hiện bucket dư thừa trước khi xóa.
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOWED_FILE="./wanted_buckets.txt"
-mapfile -t allowed < "$ALLOWED_FILE"
+TFSTATE_PATH="./terraform.tfstate" # hoặc đặt qua biến môi trường
+if command -v jq >/dev/null 2>&1 && [[ -f "$TFSTATE_PATH" ]]; then
+  mapfile -t allowed < <(jq -r '.values.root_module.resources[] | select(.type=="aws_s3_bucket") | .name' "$TFSTATE_PATH")
+else
+  mapfile -t allowed < ./wanted_buckets.txt
+fi
 
 actual=$(doctl spaces list --format Name --no-header)
 
@@ -303,11 +286,11 @@ for bucket in $actual; do
   if printf '%s\n' "${allowed[@]}" | grep -qx "$bucket"; then
     echo "Giữ bucket: $bucket (có trong IaC)"
   else
-    echo "Bucket dư thừa: $bucket — cân nhắc xóa sau khi confirm không còn trong code"
-    # Xóa thật sự nếu đã kiểm tra: doctl spaces delete-bucket "$bucket" --force
+    echo "Bucket dư thừa: $bucket — xóa sau khi đã gỡ khỏi code Terraform"
   fi
 done
 ```
+
 
 ## 2.4 Volumes
 
