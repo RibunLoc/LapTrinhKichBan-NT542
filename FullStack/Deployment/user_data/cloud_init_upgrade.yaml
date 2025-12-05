@@ -1,0 +1,5 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+runcmd:
+  - echo "Cloud-init đảm bảo máy đã cập nhật trước khi Ansible chạy" > /var/log/cloud-init-upgrade.log

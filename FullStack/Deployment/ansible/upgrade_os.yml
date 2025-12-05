@@ -1,0 +1,23 @@
+- name: Nâng cấp OS (sau khi đã bật backup)
+  hosts: droplets
+  become: yes
+
+  pre_tasks:
+    - name: Nhắc đã bật backup trước khi nâng cấp
+      debug:
+        msg: "Đảm bảo Droplet đã bật backup (Terraform backups=true) rồi mới upgrade"
+
+  tasks:
+    - name: Cập nhật cache
+      apt:
+        update_cache: yes
+
+    - name: Cài đặt update-manager-core
+      apt:
+        name: update-manager-core
+        state: present
+
+    - name: Chạy do-release-upgrade non-interactive
+      command: do-release-upgrade -f DistUpgradeViewNonInteractive
+      register: upgrade_result
+      changed_when: "'No new release found' not in upgrade_result.stderr"

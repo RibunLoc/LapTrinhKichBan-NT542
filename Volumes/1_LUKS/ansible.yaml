@@ -1,0 +1,63 @@
+- name: Mã hóa Volume bằng LUKS và tự động mount
+  hosts: droplets
+  become: yes
+  vars:
+    device: /dev/disk/by-id/scsi-0DO_Volume_data # chỉnh theo volume thực tế
+    luks_name: data_crypt
+    mount_point: /data
+
+  tasks:
+    - name: Cài đặt cryptsetup
+      apt:
+        name: cryptsetup
+        state: present
+        update_cache: yes
+
+    - name: Tạo LUKS container nếu chưa có
+      command: "cryptsetup luksFormat --batch-mode {{ device }}"
+      args:
+        creates: /etc/crypttab
+      register: luks_format
+      changed_when: "'already contains key material' not in luks_format.stderr"
+
+    - name: Mở LUKS container
+      command: "cryptsetup open {{ device }} {{ luks_name }}"
+      args:
+        creates: "/dev/mapper/{{ luks_name }}"
+
+    - name: Tạo filesystem ext4 nếu chưa có
+      filesystem:
+        fstype: ext4
+        dev: "/dev/mapper/{{ luks_name }}"
+
+    - name: Tạo thư mục mount
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0750'
+
+    - name: Ghi crypttab để tự mở sau reboot
+      lineinfile:
+        path: /etc/crypttab
+        line: "{{ luks_name }} {{ device }} none luks"
+        create: yes
+
+    - name: Ghi fstab để tự mount sau reboot
+      lineinfile:
+        path: /etc/fstab
+        line: "/dev/mapper/{{ luks_name }} {{ mount_point }} ext4 defaults 0 2"
+        create: yes
+
+    - name: Mount volume đã giải mã
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/mapper/{{ luks_name }}"
+        fstype: ext4
+        state: mounted
+
+    - name: Kiểm tra trạng thái LUKS
+      command: "cryptsetup status {{ luks_name }}"
+      register: luks_status
+
+    - debug:
+        var: luks_status.stdout

@@ -1,9 +1,9 @@
-- name: Vô hiệu hóa login bằng password, chỉ cho SSH key
+- name: Chỉ cho phép SSH key, cấm root login
   hosts: droplets
   become: yes
 
   tasks:
-    - name: Disable PasswordAuthentication
+    - name: Disable password authentication
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^PasswordAuthentication'
@@ -11,7 +11,7 @@
         state: present
         backup: yes
 
-    - name: Không Login root
+    - name: Disable root login
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^PermitRootLogin'

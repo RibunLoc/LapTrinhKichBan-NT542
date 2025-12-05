@@ -1,0 +1,72 @@
+- name: Mã hóa volume bằng LUKS và mount /data
+  hosts: droplets
+  become: yes
+  vars:
+    luks_device: "/dev/disk/by-id/scsi-0DO_Volume_lab-data"
+    luks_name: "securedata"
+    mount_point: "/data"
+    luks_passphrase: "ChangeMeLabOnly"
+
+  tasks:
+    - name: Cài đặt cryptsetup và util-linux
+      apt:
+        name:
+          - cryptsetup
+          - util-linux
+        state: present
+        update_cache: yes
+
+    - name: Kiểm tra device đã là LUKS hay chưa (không fail nếu chưa)
+      command: "cryptsetup isLuks {{ luks_device }}"
+      register: luks_check
+      failed_when: false
+      changed_when: false
+
+    - name: Tạo LUKS container nếu chưa có (PHÁ HỦY dữ liệu trên volume)
+      shell: "echo -n '{{ luks_passphrase }}' | cryptsetup luksFormat --batch-mode --type luks2 {{ luks_device }} -"
+      when: luks_check.rc != 0
+      register: luks_format
+      changed_when: luks_format.rc == 0
+
+    - name: Kiểm tra LUKS device đã được mở chưa
+      stat:
+        path: "/dev/mapper/{{ luks_name }}"
+      register: luks_mapper
+
+    - name: Mở LUKS device
+      shell: "echo -n '{{ luks_passphrase }}' | cryptsetup open {{ luks_device }} {{ luks_name }} -"
+      when: not luks_mapper.stat.exists
+      register: luks_open
+      changed_when: luks_open.rc == 0
+
+    - name: Tạo filesystem ext4 nếu chưa có
+      filesystem:
+        fstype: ext4
+        dev: "/dev/mapper/{{ luks_name }}"
+
+    - name: Tạo mountpoint
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount volume đã mã hoá
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/mapper/{{ luks_name }}"
+        fstype: ext4
+        state: mounted
+
+    - name: Ghi vào /etc/crypttab để auto open sau reboot
+      lineinfile:
+        path: /etc/crypttab
+        line: "{{ luks_name }} {{ luks_device }} none luks"
+        create: yes
+
+    - name: Ghi vào /etc/fstab để auto mount sau reboot
+      mount:
+        path: "{{ mount_point }}"
+        src: "/dev/mapper/{{ luks_name }}"
+        fstype: ext4
+        opts: defaults
+        state: present
