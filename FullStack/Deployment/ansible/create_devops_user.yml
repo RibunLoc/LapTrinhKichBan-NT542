@@ -1,0 +1,45 @@
+- name: Tạo user devops với quyền sudo và SSH key
+  hosts: droplets
+  become: yes
+
+  vars:
+    new_user: "devops"
+    
+  tasks:
+    - name: Tạo user devops
+      user:
+        name: "{{ new_user }}"
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Thêm user vào group sudo
+      user:
+        name: "{{ new_user }}"
+        groups: sudo
+        append: yes
+
+    - name: Tạo thư mục .ssh cho user devops
+      file:
+        path: "/home/{{ new_user }}/.ssh"
+        state: directory
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0700'
+
+    - name: Copy authorized_keys từ root sang devops
+      copy:
+        src: /root/.ssh/authorized_keys
+        dest: "/home/{{ new_user }}/.ssh/authorized_keys"
+        remote_src: yes
+        owner: "{{ new_user }}"
+        group: "{{ new_user }}"
+        mode: '0600'
+
+    - name: Cho phép user devops chạy sudo không cần password (tuỳ chọn)
+      lineinfile:
+        path: /etc/sudoers.d/devops
+        line: "{{ new_user }} ALL=(ALL) NOPASSWD:ALL"
+        create: yes
+        mode: '0440'
+        validate: 'visudo -cf %s'

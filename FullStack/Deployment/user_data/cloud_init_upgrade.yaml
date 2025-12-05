@@ -3,3 +3,7 @@ package_update: true
 package_upgrade: true
 runcmd:
   - echo "Cloud-init đảm bảo máy đã cập nhật trước khi Ansible chạy" > /var/log/cloud-init-upgrade.log
+
+# kiểm tra log sau khi Droplet chạy
+# cat /var/log/cloud-init-output.log
+# cat /var/log/cloud-init-upgrade.log
