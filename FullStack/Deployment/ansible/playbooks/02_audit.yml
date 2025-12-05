@@ -1,0 +1,6 @@
+- name: CIS audit (check_mode)
+  hosts: droplet_cis
+  become: true
+  gather_facts: false
+  roles:
+    - cis_audit_linux

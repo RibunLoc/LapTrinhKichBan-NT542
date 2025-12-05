@@ -1,14 +1,43 @@
-# Triển khai hạ tầng đầy đủ (theo sơ đồ)
+# DigitalOcean CIS Demo – Deployment
 
-Thư mục này gom toàn bộ mã Terraform/Ansible/Bash để dựng nhanh kiến trúc trong sơ đồ: VPC → Droplet (backup + monitoring) → firewall, volume mã hóa LUKS, Spaces (private + lifecycle + CDN), cùng alert monitoring và script dọn SSH key.
+Mục tiêu: dựng hạ tầng DigitalOcean bằng mã nguồn, harden cơ bản và có script audit CIS (automation + manual).
 
-## Cấu trúc
-- `main.tf`, `variables.tf`: Terraform dựng VPC, Droplet, Volume, Firewall, Spaces + CDN, alert monitoring.
-- `ansible/`: playbook vận hành Droplet (nâng cấp OS, vá định kỳ, khóa SSH, mã hóa LUKS).
-- `scripts/cleanup_ssh_keys.sh`: so khớp allowlist fingerprint và xóa SSH key thừa trên DigitalOcean.
+## Cấu trúc nhanh
+- `terraform/`: module + env `demo` để apply.
+- `ansible/`: playbook harden/audit Droplet.
+- `scripts/`: bash/powershell check CIS control qua doctl/API/SSH.
+- `docs/`: phương pháp, control detail, manual checklist.
+- `reports/`: sinh ra khi chạy script/audit.
 
-## Sử dụng nhanh
-1. Điền giá trị trong `terraform.tfvars` (hoặc export biến môi trường) cho token, SSH key, bucket name...
-2. `terraform init && terraform apply`
-3. Cập nhật inventory Ansible theo IP Droplet, rồi chạy playbook cần thiết.
-4. Cập nhật `allowed_keys.txt` để script chỉ giữ SSH key hợp lệ.
+## Triển khai
+```bash
+cd terraform/envs/demo
+terraform init
+terraform apply -var-file=terraform.tfvars
+```
+
+Terraform tạo VPC, Droplet (backup/monitoring), Firewall, Volume, Spaces (private + CDN), optional DB, alert CPU.
+
+## Harden & audit OS
+```bash
+cd ../ansible
+ansible-playbook -i inventory/hosts.ini playbooks/01_harden.yml
+ansible-playbook -i inventory/hosts.ini playbooks/02_audit.yml
+```
+
+## Audit hạ tầng (automation)
+```bash
+./scripts/bash/check_droplet.sh
+./scripts/bash/check_firewall.sh
+SPACES_BUCKET=my-bucket ./scripts/bash/check_spaces.sh
+SSH_TARGET=root@<droplet-ip> ./scripts/bash/check_volume.sh
+```
+PowerShell: `./scripts/powershell/Invoke-CisCheck-Droplet.ps1 -EnvTag env:demo`
+
+Báo cáo JSON nằm trong `reports/`, log trong `logs/`, exit code !=0 khi có control fail.
+
+## Manual checklist
+Mở `docs/manual_checklist.md` và từng file `docs/controls/*.md` cho control manual (vd: member/2FA). Ghi evidence khi fail/pass.
+
+## CI gợi ý
+Workflow `.github/workflows/cis_check.yml` (kèm repo) chạy terraform fmt/validate, shellcheck, và audit script; upload báo cáo làm artifact.

@@ -1,0 +1,7 @@
+- name: CIS baseline harden
+  hosts: droplet_cis
+  become: true
+  vars:
+    devops_user: devops
+  roles:
+    - cis_baseline_linux

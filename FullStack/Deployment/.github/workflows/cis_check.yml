@@ -1,0 +1,76 @@
+name: cis-check
+
+on:
+  push:
+  pull_request:
+
+env:
+  DO_TOKEN: ${{ secrets.DO_TOKEN }}
+  SPACES_ACCESS_ID: ${{ secrets.SPACES_ACCESS_ID }}
+  SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+  SPACES_BUCKET: ${{ secrets.SPACES_BUCKET }}
+  SPACES_REGION: ${{ secrets.SPACES_REGION || 'sgp1' }}
+  SPACES_ENDPOINT: ${{ secrets.SPACES_ENDPOINT || 'https://sgp1.digitaloceanspaces.com' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt + validate
+        working-directory: FullStack/Deployment/terraform
+        run: |
+          terraform fmt -recursive -check
+          cd envs/demo
+          terraform init -backend=false
+          terraform validate -no-color
+
+      - name: Shellcheck bash scripts
+        working-directory: FullStack/Deployment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/bash/*.sh
+
+      - name: Install doctl
+        if: env.DO_TOKEN != ''
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ env.DO_TOKEN }}
+
+      - name: Run CIS droplet check
+        if: env.DO_TOKEN != ''
+        working-directory: FullStack/Deployment
+        env:
+          ENV_TAG: "env:demo"
+        run: |
+          ./scripts/bash/check_droplet.sh
+
+      - name: Run CIS Spaces check
+        if: env.DO_TOKEN != '' && env.SPACES_BUCKET != ''
+        working-directory: FullStack/Deployment
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.SPACES_ACCESS_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.SPACES_SECRET_KEY }}
+          SPACES_BUCKET: ${{ env.SPACES_BUCKET }}
+          SPACES_REGION: ${{ env.SPACES_REGION }}
+          SPACES_ENDPOINT: ${{ env.SPACES_ENDPOINT }}
+        run: |
+          sudo apt-get install -y awscli
+          ./scripts/bash/check_spaces.sh
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cis-reports
+          path: |
+            FullStack/Deployment/reports/*.json
+            FullStack/Deployment/logs/*
+          if-no-files-found: ignore

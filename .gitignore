@@ -12,3 +12,7 @@ terraform.tfvars.example
 .crash
 .terraform/
 terraform.tfvars
+
+# DigitalOcean CIS demo outputs
+FullStack/Deployment/logs/
+FullStack/Deployment/reports/
