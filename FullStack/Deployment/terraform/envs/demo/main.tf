@@ -41,6 +41,7 @@ module "droplet" {
   image       = var.droplet_image
   vpc_uuid    = module.vpc.id
   ssh_key_ids = var.ssh_key_ids
+  ssh_key_names = var.ssh_key_names
   tags        = concat(local.common_tags, ["role:web"])
   user_data   = file("${path.module}/../../../user_data/cloud_init_upgrade.yaml")
 }
@@ -79,22 +80,6 @@ module "spaces" {
   cdn_custom_domain  = var.cdn_custom_domain
 }
 
-module "database" {
-  source = "../../modules/database"
-
-  enabled              = var.enable_db
-  name                 = "${var.environment}-db"
-  engine               = var.db_engine
-  version              = var.db_version
-  size                 = var.db_size
-  region               = var.region
-  node_count           = var.db_node_count
-  private_network_uuid = module.vpc.id
-  tags                 = concat(local.common_tags, ["role:db"])
-  maintenance_day      = var.maintenance_day
-  maintenance_hour     = var.maintenance_hour
-}
-
 resource "digitalocean_monitor_alert" "cpu_high" {
   count       = length(var.alert_emails) > 0 || var.slack_webhook_url != "" ? 1 : 0
   type        = "v1/insights/droplet/cpu"
@@ -106,15 +91,17 @@ resource "digitalocean_monitor_alert" "cpu_high" {
 
   alerts {
     email = var.alert_emails
-  }
 
-  dynamic "slack" {
-    for_each = var.slack_webhook_url != "" ? [1] : []
-    content {
-      url     = var.slack_webhook_url
-      channel = "alert-digital-ocean"
+    dynamic "slack" {
+      for_each = var.slack_webhook_url != "" ? [1] : []
+      content {
+        url     = var.slack_webhook_url
+        channel = "alert-digital-ocean"
+      }
     }
   }
+
+
 
   entities = [module.droplet.id]
   tags     = local.common_tags
@@ -128,15 +115,18 @@ output "vpc_id" {
   value = module.vpc.id
 }
 
+output "ssh_keys" {
+  value = module.droplet.ssh_key_names
+}
+
+output "ssh_key_ids" {
+  value = module.droplet.ssh_key_ids
+}
+
 output "spaces_endpoint" {
   value = module.spaces.bucket_domain
 }
 
 output "cdn_endpoint" {
   value = module.spaces.cdn_endpoint
-}
-
-output "db_host" {
-  value       = module.database.host
-  description = "Managed DB host (if enabled)"
 }

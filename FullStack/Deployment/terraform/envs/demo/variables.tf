@@ -64,6 +64,11 @@ variable "droplet_image" {
   default     = "ubuntu-22-04-x64"
 }
 
+variable "ssh_key_names" {
+  description = "DigitalOcean SSH key names"
+  type        = list(string)
+}
+
 variable "ssh_key_ids" {
   description = "DigitalOcean SSH key IDs"
   type        = list(number)
