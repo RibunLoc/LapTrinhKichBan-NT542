@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.37"
+    }
+  }
+}
+
 variable "name" {
   type        = string
   description = "Volume name"
@@ -25,6 +34,11 @@ variable "tags" {
   default     = []
 }
 
+variable "attach" {
+  type = bool
+  default = false
+}
+
 variable "droplet_id" {
   type        = string
   description = "Attach volume to droplet id (optional)"
@@ -40,7 +54,8 @@ resource "digitalocean_volume" "this" {
 }
 
 resource "digitalocean_volume_attachment" "attach" {
-  count      = var.droplet_id == "" ? 0 : 1
+  count      = var.attach ? 1 : 0
+  
   droplet_id = var.droplet_id
   volume_id  = digitalocean_volume.this.id
 }

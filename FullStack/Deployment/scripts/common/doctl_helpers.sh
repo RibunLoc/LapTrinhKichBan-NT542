@@ -19,7 +19,7 @@ run_doctl_json() {
   local args=("$@")
   local output
   if ! output=$(doctl "${args[@]}" --output json 2>>"$LOG_DIR/doctl_helpers.log"); then
-    log "ERROR" "doctl ${args[*]} failed"
+    log "FAIL" "doctl ${args[*]} failed"
     return 1
   fi
   echo "$output"

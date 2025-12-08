@@ -1,2 +1,3 @@
-fingerprint:example1
-fingerprint:example2
+nhom15
+oceandigital
+test_key

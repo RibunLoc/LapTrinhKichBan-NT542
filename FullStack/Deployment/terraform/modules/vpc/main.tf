@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.37"
+    }
+  }
+}
+
 variable "name" {
   type        = string
   description = "VPC name"

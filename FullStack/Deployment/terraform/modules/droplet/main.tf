@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    digitalocean = {
+      source  = "digitalocean/digitalocean"
+      version = "~> 2.37"
+    }
+  }
+}
+
 variable "name" {
   type        = string
   description = "Droplet name"
@@ -26,6 +35,11 @@ variable "vpc_uuid" {
 variable "ssh_key_ids" {
   type        = list(number)
   description = "SSH key IDs"
+}
+
+variable "ssh_key_names" {
+  type = list(string)
+  description = "SSH key names"
 }
 
 variable "tags" {
@@ -64,6 +78,13 @@ variable "volume_ids" {
   default     = []
 }
 
+data "digitalocean_ssh_keys" "find_keys" {
+  filter {
+    key = "name"
+    values = var.ssh_key_names
+  }
+}
+
 resource "digitalocean_droplet" "this" {
   name   = var.name
   region = var.region
@@ -75,7 +96,9 @@ resource "digitalocean_droplet" "this" {
   monitoring = var.monitoring
   ipv6       = var.ipv6
   tags       = var.tags
-  ssh_keys   = var.ssh_key_ids
+  ssh_keys   = [
+    for k in data.digitalocean_ssh_keys.find_keys.ssh_keys : k.id
+  ]
   volume_ids = var.volume_ids
   user_data  = var.user_data
 }
@@ -91,3 +114,13 @@ output "ipv4" {
 output "name" {
   value = digitalocean_droplet.this.name
 }
+
+output "ssh_key_ids" {
+  value = [for k in data.digitalocean_ssh_keys.find_keys.ssh_keys : k.id]
+}
+
+output "ssh_key_names" {
+  value = [for k in data.digitalocean_ssh_keys.find_keys.ssh_keys : k.name]
+}
+
+
