@@ -20,9 +20,10 @@ require_bin() {
 
 require_bin jq
 require_bin doctl
-[[ -n "${SSH_TARGET:-}" ]] && require_bin ssh
+if [[ -n "${SSH_TARGET:-}" || -n "${SSH_TARGETS:-}" ]]; then
+  require_bin ssh
+fi
 [[ "$RUN_ANSIBLE_AUDIT" == "1" ]] && require_bin ansible-playbook
-
 
 log "INFO" "Fetching droplets with tag $ENV_TAG"
 droplets_json=$(run_doctl_json compute droplet list --tag-name "$ENV_TAG")
@@ -55,13 +56,34 @@ for id in "${droplet_ids[@]}"; do
     log "ERROR" "Droplet $name missing monitoring agent"
     failed_entries+=("$(jq -n --arg control "2.1.x" --arg droplet "$name" --arg reason "Monitoring not enabled" '{control:$control,droplet:$droplet,reason:$reason}')")
   fi
-  
 done
 
-# SSH/OS-level checks được thực hiện bởi Ansible (02_audit.yml)
-# Bật RUN_ANSIBLE_AUDIT=1 để chạy Ansible audit từ script này
-# Ansible sẽ kiểm tra: PermitRootLogin, PasswordAuthentication, auditd, unattended-upgrades
+# Optional SSH config verification
+declare -a ssh_targets=()
+if [[ -n "${SSH_TARGETS:-}" ]]; then
+  IFS=',' read -ra ssh_targets <<<"$SSH_TARGETS"
+elif [[ -n "${SSH_TARGET:-}" ]]; then
+  ssh_targets=("$SSH_TARGET")
+fi
 
+for target in "${ssh_targets[@]}"; do
+  target_trimmed="$(echo "$target" | xargs)"
+  [[ -z "$target_trimmed" ]] && continue
+  log "INFO" "Checking sshd_config on $target_trimmed"
+  sshd_cfg=$(ssh_run "$target_trimmed" "grep -Ei '^(PasswordAuthentication|PermitRootLogin)' /etc/ssh/sshd_config || true")
+
+  if ! grep -Eq '^PasswordAuthentication[[:space:]]+no' <<<"$sshd_cfg"; then
+    failed_entries+=("$(jq -n --arg control "5.x" --arg droplet "$target_trimmed" --arg reason "PasswordAuthentication not disabled" '{control:$control,droplet:$droplet,reason:$reason}')")
+    log "ERROR" "PasswordAuthentication not set to no on $target_trimmed"
+  fi
+
+  if ! grep -Eq '^PermitRootLogin[[:space:]]+no' <<<"$sshd_cfg"; then
+    failed_entries+=("$(jq -n --arg control "5.x" --arg droplet "$target_trimmed" --arg reason "PermitRootLogin not disabled" '{control:$control,droplet:$droplet,reason:$reason}')")
+    log "ERROR" "PermitRootLogin not set to no on $target_trimmed"
+  fi
+done
+
+# SSH/OS-level audit via Ansible
 if [[ "$RUN_ANSIBLE_AUDIT" == "1" ]]; then
   log "INFO" "Running Ansible audit (--check) inventory=$ANSIBLE_INVENTORY limit=$ANSIBLE_LIMIT"
   if ! ansible-playbook -i "$ANSIBLE_INVENTORY" "$ANSIBLE_PLAYBOOK" --check --limit "$ANSIBLE_LIMIT" | tee -a "$LOG_FILE"; then
@@ -69,10 +91,10 @@ if [[ "$RUN_ANSIBLE_AUDIT" == "1" ]]; then
     failed_entries+=("$(jq -n --arg control "5.x" --arg droplet "$ANSIBLE_LIMIT" --arg reason "Ansible audit failed" '{control:$control,droplet:$droplet,reason:$reason}')")
   fi
 else
-  log "INFO" "SSH/OS audit skipped. Set RUN_ANSIBLE_AUDIT=1 to run Ansible checks (sshd_config, auditd, etc.)"
+  log "INFO" "SSH/OS audit skipped. Set RUN_ANSIBLE_AUDIT=1 to run Ansible checks."
 fi
 
-# Kiểm tra alert CPU (monitoring) gắn với droplet
+# Monitoring alert check
 if [[ "$CHECK_ALERTS" == "1" ]]; then
   alert_json=$(doctl monitor alert list --output json 2>/dev/null || true)
   droplet_ids_json=$(printf '%s\n' "${droplet_ids[@]}" | jq -R . | jq -s '.')
@@ -82,10 +104,10 @@ if [[ "$CHECK_ALERTS" == "1" ]]; then
     ] | length
   ')
   if [[ "${cpu_alert_count:-0}" -lt 1 ]]; then
-    log "ERROR" "Không tìm thấy monitor alert CPU gắn với droplets tag $ENV_TAG"
+    log "ERROR" "No CPU monitor alert attached to droplets tag $ENV_TAG"
     failed_entries+=("$(jq -n --arg control "monitoring-alert" --arg env "$ENV_TAG" --arg reason "No CPU alert attached to droplets" '{control:$control,env:$env,reason:$reason}')")
   else
-    log "INFO" "Monitoring alert CPU tồn tại ($cpu_alert_count)"
+    log "INFO" "Monitoring alert CPU exists ($cpu_alert_count)"
   fi
 fi
 
