@@ -32,11 +32,6 @@ variable "vpc_uuid" {
   description = "VPC UUID"
 }
 
-variable "ssh_key_ids" {
-  type        = list(number)
-  description = "SSH key IDs"
-}
-
 variable "ssh_key_names" {
   type = list(string)
   description = "SSH key names"

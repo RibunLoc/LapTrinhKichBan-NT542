@@ -34,13 +34,12 @@ module "vpc" {
 
 module "droplet" {
   source = "../../modules/droplet"
-
+  
   name        = "${var.environment}-vm"
   region      = var.region
   size        = var.droplet_size
   image       = var.droplet_image
   vpc_uuid    = module.vpc.id
-  ssh_key_ids = var.ssh_key_ids
   ssh_key_names = var.ssh_key_names
   tags        = concat(local.common_tags, ["role:web"])
   user_data   = file("${path.module}/../../../user_data/cloud_init_upgrade.yaml")

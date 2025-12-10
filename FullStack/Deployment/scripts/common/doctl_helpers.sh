@@ -5,7 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
 REPORT_DIR="${REPORT_DIR:-$ROOT_DIR/reports}"
-LOG_FILE="${LOG_FILE:-$LOG_DIR/doctl_helpers.log}"
+HOST_LABEL="$(hostname 2>/dev/null || echo default)"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/doctl_helpers_${HOST_LABEL}.log}"
 mkdir -p "$LOG_DIR" "$REPORT_DIR"
 
 log() {
@@ -18,7 +19,7 @@ run_doctl_json() {
   # Usage: run_doctl_json compute droplet list --tag-name env:demo
   local args=("$@")
   local output
-  if ! output=$(doctl "${args[@]}" --output json 2>>"$LOG_DIR/doctl_helpers.log"); then
+  if ! output=$(doctl "${args[@]}" --output json 2>>"$LOG_FILE"); then
     log "FAIL" "doctl ${args[*]} failed"
     return 1
   fi
