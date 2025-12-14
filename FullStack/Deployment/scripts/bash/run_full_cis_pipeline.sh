@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+
+cd "$ROOT_DIR"
+
+RUN_TS="$(date -u +%Y%m%d%H%M%S)"
+PIPELINE_LOG="$ROOT_DIR/logs/pipeline_${RUN_TS}.log"
+mkdir -p "$ROOT_DIR/logs" "$ROOT_DIR/reports"
+
+log() { echo "[$(date --iso-8601=seconds)] [$1] ${*:2}" | tee -a "$PIPELINE_LOG" >&2; }
+
+require_bin() { command -v "$1" >/dev/null 2>&1 || { log "ERROR" "Missing dependency: $1"; exit 2; }; }
+
+usage() {
+  cat <<'EOF'
+run_full_cis_pipeline.sh - Terraform apply -> Ansible config -> CIS controls
+
+Run from: FullStack/Deployment
+
+Environment (from .env):
+  DO_ACCESS_TOKEN (or DIGITALOCEAN_ACCESS_TOKEN)
+  ENV_TAG=env:demo
+  SSH_KEY_PATH, SSH_PORT
+  (Spaces) SPACES_BUCKET, SPACES_REGION, SPACES_ENDPOINT, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY
+
+Toggles:
+  RUN_APPLY=1                # terraform apply (default 0 => plan only)
+  RUN_HARDEN=1               # run ansible/playbooks/01_harden.yml as root (default 1)
+  RUN_SECURITY_UPDATES=1     # run ansible/security_updates.yml as devops (default 1)
+  RUN_LUKS=0                 # run ansible/luks_volume.yml (default 0, destructive)
+  CONFIRM_LUKS=0             # must be 1 if RUN_LUKS=1
+  RUN_CIS=1                  # run scripts/bash/run_cis_controls.sh (default 1)
+
+Optional:
+  TFVARS_FILE=terraform.tfvars
+  HOSTS="ip1 ip2"            # override hosts list; otherwise uses terraform output droplet_ip
+  SSH_USER=devops            # used by CIS scripts
+  SSH_USER_FALLBACK=root
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+# Load .env if present
+if [[ -f ".env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
+fi
+
+# Normalize tokens for doctl/terraform
+export DIGITALOCEAN_ACCESS_TOKEN="${DIGITALOCEAN_ACCESS_TOKEN:-${DO_ACCESS_TOKEN:-}}"
+if [[ -n "${DO_ACCESS_TOKEN:-}" && -z "${TF_VAR_do_token:-}" ]]; then
+  export TF_VAR_do_token="$DO_ACCESS_TOKEN"
+fi
+
+# Normalize Spaces creds for AWS CLI (used by spaces controls)
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${SPACES_ACCESS_KEY_ID:-}}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${SPACES_SECRET_ACCESS_KEY:-}}"
+
+RUN_APPLY="${RUN_APPLY:-0}"
+RUN_HARDEN="${RUN_HARDEN:-1}"
+RUN_SECURITY_UPDATES="${RUN_SECURITY_UPDATES:-1}"
+RUN_LUKS="${RUN_LUKS:-0}"
+CONFIRM_LUKS="${CONFIRM_LUKS:-0}"
+RUN_CIS="${RUN_CIS:-1}"
+
+TF_DIR="$ROOT_DIR/terraform/envs/demo"
+TFVARS_FILE="${TFVARS_FILE:-terraform.tfvars}"
+TFVARS_ARG=()
+if [[ -f "$TF_DIR/$TFVARS_FILE" ]]; then
+  TFVARS_ARG=(-var-file="$TFVARS_FILE")
+fi
+
+require_bin terraform
+require_bin doctl
+require_bin jq
+require_bin ansible-playbook
+
+if [[ "$RUN_CIS" == "1" ]]; then
+  require_bin bash
+fi
+
+log "INFO" "Pipeline log: $PIPELINE_LOG"
+log "INFO" "RUN_APPLY=$RUN_APPLY RUN_HARDEN=$RUN_HARDEN RUN_SECURITY_UPDATES=$RUN_SECURITY_UPDATES RUN_LUKS=$RUN_LUKS RUN_CIS=$RUN_CIS"
+
+log "INFO" "Terraform init ($TF_DIR)"
+terraform -chdir="$TF_DIR" init -input=false | tee -a "$PIPELINE_LOG"
+
+log "INFO" "Terraform plan"
+terraform -chdir="$TF_DIR" plan -input=false "${TFVARS_ARG[@]}" | tee -a "$PIPELINE_LOG"
+
+if [[ "$RUN_APPLY" == "1" ]]; then
+  log "INFO" "Terraform apply"
+  terraform -chdir="$TF_DIR" apply -auto-approve -input=false "${TFVARS_ARG[@]}" | tee -a "$PIPELINE_LOG"
+else
+  log "WARN" "RUN_APPLY!=1 -> skipping terraform apply"
+fi
+
+log "INFO" "Reading droplet IP from terraform output"
+DROPLET_IP="$(terraform -chdir="$TF_DIR" output -raw droplet_ip 2>/dev/null || true)"
+if [[ -z "$DROPLET_IP" ]]; then
+  log "ERROR" "terraform output droplet_ip is empty"
+  exit 1
+fi
+log "INFO" "DROPLET_IP=$DROPLET_IP"
+
+HOSTS="${HOSTS:-$DROPLET_IP}"
+export HOSTS
+
+SSH_PORT="${SSH_PORT:-22}"
+SSH_KEY_PATH="${SSH_KEY_PATH:-}"
+if [[ -n "$SSH_KEY_PATH" && "$SSH_KEY_PATH" == "~"* ]]; then
+  SSH_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
+fi
+export SSH_PORT SSH_KEY_PATH
+
+log "INFO" "HOSTS=$HOSTS SSH_PORT=$SSH_PORT SSH_KEY_PATH=${SSH_KEY_PATH:-<unset>}"
+
+# Avoid host key problems in Ansible (ephemeral demo droplets often reuse IPs)
+export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
+export ANSIBLE_SSH_COMMON_ARGS="${ANSIBLE_SSH_COMMON_ARGS:- -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null }"
+
+INV_ROOT="$(mktemp)"
+INV_DEVOPS="$(mktemp)"
+trap 'rm -f "$INV_ROOT" "$INV_DEVOPS"' EXIT
+
+if [[ "$RUN_HARDEN" == "1" ]]; then
+  log "INFO" "Generating Ansible inventory (root) -> $INV_ROOT"
+  HOSTS="$HOSTS" ANSIBLE_USER="root" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true ansible/inventory/env_inventory.sh >"$INV_ROOT"
+  log "INFO" "Running Ansible harden baseline (root)"
+  ansible-playbook -i "$INV_ROOT" ansible/playbooks/01_harden.yml | tee -a "$PIPELINE_LOG"
+else
+  log "WARN" "RUN_HARDEN!=1 -> skipping baseline harden"
+fi
+
+log "INFO" "Generating Ansible inventory (devops) -> $INV_DEVOPS"
+HOSTS="$HOSTS" ANSIBLE_USER="${ANSIBLE_USER_POST_HARDEN:-devops}" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true ansible/inventory/env_inventory.sh >"$INV_DEVOPS"
+
+if [[ "$RUN_SECURITY_UPDATES" == "1" ]]; then
+  log "INFO" "Running security updates (devops)"
+  ansible-playbook -i "$INV_DEVOPS" ansible/security_updates.yml | tee -a "$PIPELINE_LOG"
+else
+  log "WARN" "RUN_SECURITY_UPDATES!=1 -> skipping security updates"
+fi
+
+if [[ "$RUN_LUKS" == "1" ]]; then
+  if [[ "$CONFIRM_LUKS" != "1" ]]; then
+    log "ERROR" "RUN_LUKS=1 but CONFIRM_LUKS!=1. luks_volume.yml can destroy volume data. Set CONFIRM_LUKS=1 to proceed."
+    exit 2
+  fi
+  log "WARN" "Running LUKS encryption (destructive if volume not yet LUKS)"
+  ansible-playbook -i "$INV_DEVOPS" ansible/luks_volume.yml -e "luks_device=${LUKS_DEVICE:-/dev/disk/by-id/scsi-0DO_Volume_demo-data} luks_name=${LUKS_NAME:-securedata} mount_point=${MOUNT_POINT:-/data} luks_passphrase=${LUKS_PASSPHRASE:-ChangeMeLabOnly}" | tee -a "$PIPELINE_LOG"
+else
+  log "INFO" "Skipping LUKS (RUN_LUKS=0)"
+fi
+
+if [[ "$RUN_CIS" == "1" ]]; then
+  log "INFO" "Running CIS controls"
+  bash scripts/bash/run_cis_controls.sh | tee -a "$PIPELINE_LOG"
+else
+  log "WARN" "RUN_CIS!=1 -> skipping CIS controls"
+fi
+
+log "INFO" "Done. Pipeline log: $PIPELINE_LOG"
+

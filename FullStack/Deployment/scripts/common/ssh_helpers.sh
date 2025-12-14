@@ -8,7 +8,11 @@ SSH_OPTS=(
 )
 
 if [[ -n "${SSH_KEY_PATH:-}" ]]; then
-  SSH_OPTS+=(-i "$SSH_KEY_PATH")
+  SSH_KEY_PATH_EXPANDED="$SSH_KEY_PATH"
+  if [[ "$SSH_KEY_PATH_EXPANDED" == "~"* ]]; then
+    SSH_KEY_PATH_EXPANDED="${SSH_KEY_PATH_EXPANDED/#\~/$HOME}"
+  fi
+  SSH_OPTS+=(-i "$SSH_KEY_PATH_EXPANDED")
 fi
 
 if [[ -n "${SSH_PORT:-}" ]]; then

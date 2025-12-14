@@ -1,5 +1,5 @@
 - name: Nâng cấp OS (sau khi đã bật backup)
-  hosts: droplets
+  hosts: droplet_cis
   become: yes
 
   pre_tasks:

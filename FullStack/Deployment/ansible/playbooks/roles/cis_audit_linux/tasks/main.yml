@@ -1,26 +1,27 @@
-- name: Check sshd PermitRootLogin
-  ansible.builtin.shell: "grep -E '^PermitRootLogin' /etc/ssh/sshd_config || true"
-  register: permit_root
+# --- SSHD checks ---
+
+- name: Get effective sshd configuration
+  ansible.builtin.command: "sshd -T"
+  register: sshd_t
   changed_when: false
+  check_mode: no 
 
 - name: Assert root login disabled
   ansible.builtin.assert:
     that:
-      - "'PermitRootLogin no' in permit_root.stdout"
-    fail_msg: "PermitRootLogin is not set to no"
+      - "'permitrootlogin no' in sshd_t.stdout"
+    fail_msg: "Effective SSHD config does not have PermitRootLogin no"
     success_msg: "PermitRootLogin configured correctly"
-
-- name: Check sshd PasswordAuthentication
-  ansible.builtin.shell: "grep -E '^PasswordAuthentication' /etc/ssh/sshd_config || true"
-  register: password_auth
-  changed_when: false
 
 - name: Assert password auth disabled
   ansible.builtin.assert:
     that:
-      - "'PasswordAuthentication no' in password_auth.stdout"
-    fail_msg: "PasswordAuthentication not disabled"
-    success_msg: "PasswordAuthentication disabled"
+      - "'passwordauthentication no' in sshd_t.stdout"
+    fail_msg: "PasswordAuthentication not disabled in effective config"
+    success_msg: "PasswordAuthentication disabled in effective config"
+
+
+# --- auditd check ---
 
 - name: Check auditd service
   ansible.builtin.service_facts:
@@ -29,18 +30,23 @@
   ansible.builtin.assert:
     that:
       - "'auditd.service' in ansible_facts.services"
-      - "ansible_facts.services['auditd.service'].state == 'running'"
+      - ansible_facts.services['auditd.service'].state == 'running'
     fail_msg: "auditd not running"
     success_msg: "auditd running"
 
+
+# --- unattended-upgrades check ---
+
 - name: Check unattended-upgrades package
-  ansible.builtin.shell: "dpkg -l | grep unattended-upgrades || true"
+  ansible.builtin.shell: >
+    dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null || true
   register: unattended_pkg
   changed_when: false
+  check_mode: no 
 
 - name: Assert unattended-upgrades present
   ansible.builtin.assert:
     that:
-      - unattended_pkg.stdout != ""
+      - "'install ok installed' in unattended_pkg.stdout"
     fail_msg: "unattended-upgrades not installed"
     success_msg: "unattended-upgrades installed"

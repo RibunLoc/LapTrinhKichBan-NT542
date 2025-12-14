@@ -24,13 +24,13 @@ failed_entries=()
 
 if [[ ${#volumes[@]} -eq 0 ]]; then
   log "ERROR" "No volume found with tag $ENV_TAG"
-  failed_entries+=("$(jq -n --arg control "6.x" --arg reason "No tagged volumes" '{control:$control,reason:$reason}')")
+  failed_entries+=("$(jq -n --arg control "2.4.1" --arg reason "No tagged volumes" '{control:$control,reason:$reason}')")
 else
   for vol in "${volumes[@]}"; do
     attached=$(echo "$volumes_json" | jq -r ".[] | select(.name==\"$vol\") | .droplet_ids | length")
     if [[ "$attached" -eq 0 ]]; then
       log "ERROR" "Volume $vol not attached"
-      failed_entries+=("$(jq -n --arg control "6.x" --arg volume "$vol" --arg reason "Not attached to droplet" '{control:$control,volume:$volume,reason:$reason}')")
+      failed_entries+=("$(jq -n --arg control "2.4.1" --arg volume "$vol" --arg reason "Not attached to droplet" '{control:$control,volume:$volume,reason:$reason}')")
     fi
   done
 fi
@@ -39,16 +39,16 @@ if [[ -n "$SSH_TARGET" ]]; then
   log "INFO" "Checking mount options on $SSH_TARGET for $MOUNT_POINT"
   fstab_line=$(ssh_run "$SSH_TARGET" "grep -E \"[[:space:]]${MOUNT_POINT}[[:space:]]\" /etc/fstab || true")
   if [[ -z "$fstab_line" ]]; then
-    failed_entries+=("$(jq -n --arg control "6.x" --arg reason "Mount point not found in /etc/fstab" '{control:$control,reason:$reason}')")
+    failed_entries+=("$(jq -n --arg control "2.4.1" --arg reason "Mount point not found in /etc/fstab" '{control:$control,reason:$reason}')")
   else
     if ! grep -Eq 'noexec' <<<"$fstab_line"; then
-      failed_entries+=("$(jq -n --arg control "6.x" --arg reason "noexec not set" '{control:$control,reason:$reason}')")
+      failed_entries+=("$(jq -n --arg control "2.4.1" --arg reason "noexec not set" '{control:$control,reason:$reason}')")
     fi
     if ! grep -Eq 'nodev' <<<"$fstab_line"; then
-      failed_entries+=("$(jq -n --arg control "6.x" --arg reason "nodev not set" '{control:$control,reason:$reason}')")
+      failed_entries+=("$(jq -n --arg control "2.4.1" --arg reason "nodev not set" '{control:$control,reason:$reason}')")
     fi
     if ! grep -Eq 'nosuid' <<<"$fstab_line"; then
-      failed_entries+=("$(jq -n --arg control "6.x" --arg reason "nosuid not set" '{control:$control,reason:$reason}')")
+      failed_entries+=("$(jq -n --arg control "2.4.1" --arg reason "nosuid not set" '{control:$control,reason:$reason}')")
     fi
   fi
 else

@@ -18,7 +18,7 @@ all_keys_json=$(doctl compute ssh-key list -o json)
 declare -a DELETE_LIST=()
 declare -a KEEP_LIST=()
 
-echo "$all_keys_json" | jq -c '.[]' | while read -r key; do
+while read -r key; do
   id=$(echo "$key" | jq -r '.id')
   fingerprint=$(echo "$key" | jq -r '.fingerprint')
   name=$(echo "$key" | jq -r '.name')
@@ -46,7 +46,7 @@ echo "$all_keys_json" | jq -c '.[]' | while read -r key; do
 
     doctl compute ssh-key delete "$id" -f
   fi
-done
+done < <(echo "$all_keys_json" | jq -c '.[]')
 
 # Gửi Slack nếu có webhook
 if [[ -n "$SLACK_WEBHOOK_URL" ]]; then

@@ -1,5 +1,5 @@
 - name: Vá bảo mật định kỳ
-  hosts: droplets
+  hosts: droplet_cis
   become: yes
 
   tasks:

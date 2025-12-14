@@ -1,8 +1,8 @@
 - name: Mã hóa volume bằng LUKS và mount /data
-  hosts: droplets
+  hosts: droplet_cis
   become: yes
   vars:
-    luks_device: "/dev/disk/by-id/scsi-0DO_Volume_lab-data"
+    luks_device: "/dev/disk/by-id/scsi-0DO_Volume_demo-data"
     luks_name: "securedata"
     mount_point: "/data"
     luks_passphrase: "ChangeMeLabOnly"

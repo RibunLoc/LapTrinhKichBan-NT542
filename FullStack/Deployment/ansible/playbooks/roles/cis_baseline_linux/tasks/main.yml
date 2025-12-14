@@ -1,10 +1,10 @@
-- name: Ensure packages are updated
+- name: Đảm bảo các gói được cập nhật
   ansible.builtin.apt:
     update_cache: yes
     upgrade: dist
     cache_valid_time: 3600
 
-- name: Install baseline packages
+- name: Cài đặt các gói cơ bản
   ansible.builtin.apt:
     name:
       - fail2ban
@@ -12,26 +12,26 @@
       - auditd
     state: present
 
-- name: Ensure auditd service enabled
+- name: Đảm bảo auditd đang chạy và khởi động cùng hệ thống
   ansible.builtin.service:
     name: auditd
     state: started
     enabled: yes
 
-- name: Create ops user
+- name: Tạo user devops
   ansible.builtin.user:
     name: "{{ devops_user | default('devops') }}"
     shell: /bin/bash
     create_home: yes
     state: present
 
-- name: Add ops user to sudo
+- name: Thêm devops user vào nhóm sudo
   ansible.builtin.user:
     name: "{{ devops_user | default('devops') }}"
     groups: sudo
     append: yes
 
-- name: Create .ssh directory for ops user
+- name: Tạo thư mục .ssh cho user devops
   ansible.builtin.file:
     path: "/home/{{ devops_user | default('devops') }}/.ssh"
     state: directory
@@ -39,7 +39,7 @@
     group: "{{ devops_user | default('devops') }}"
     mode: "0700"
   
-- name: Allow devops passwordless sudo
+- name: Cho phép devops sử dụng sudo không cần mật khẩu
   ansible.builtin.copy:
     dest: "/etc/sudoers.d/{{ devops_user | default('devops') }}"
     content: "{{ devops_user | default('devops') }} ALL=(ALL) NOPASSWD:ALL"
@@ -48,7 +48,7 @@
     mode: "0440"
 
 
-- name: Copy authorized_keys from root to ops user
+- name: Copy authorized_keys từ root vào devops user
   ansible.builtin.copy:
     src: /root/.ssh/authorized_keys
     dest: "/home/{{ devops_user | default('devops') }}/.ssh/authorized_keys"
@@ -57,7 +57,7 @@
     mode: "0600"
     remote_src: yes
 
-- name: Harden sshd - disable password auth
+- name: Harden sshd - tắt PasswordAuthentication
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
     regexp: '^PasswordAuthentication'
@@ -65,14 +65,14 @@
     state: present
     backup: yes
 
-- name: Harden sshd - disable root login
+- name: Harden sshd - tắt PermitRootLogin
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
     regexp: '^PermitRootLogin'
     line: 'PermitRootLogin no'
     state: present
 
-- name: Reload sshd
+- name: Khởi động lại sshd
   ansible.builtin.service:
     name: sshd
     state: reloaded

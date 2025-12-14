@@ -26,13 +26,24 @@ cdn_endpoint=""
 
 # 1) ACL check - kiểm tra public grants
 log "INFO" "Checking Spaces bucket $SPACES_BUCKET ACL"
-acl_json=$(aws s3api get-bucket-acl --bucket "$SPACES_BUCKET" --endpoint-url "$SPACES_ENDPOINT")
+acl_json=$(aws s3api get-bucket-acl --bucket "$SPACES_BUCKET" --endpoint-url "$SPACES_ENDPOINT" 2>/dev/null || echo '{}')
 
-public_grants=$(echo "$acl_json" | jq '[.Grants[] | select(.Grantee.URI? | test("AllUsers|AuthenticatedUsers"))] | length')
+public_grants=$(echo "$acl_json" | jq '
+  [
+    (.Grants // [])[]?
+    | select(.Grantee.URI? | test("AllUsers|AuthenticatedUsers"))
+  ] | length
+')
+
 if [[ "$public_grants" -gt 0 ]]; then
   log "ERROR" "Bucket has public ACL grants"
-  failed_entries+=("$(jq -n --arg control "3.1" --arg bucket "$SPACES_BUCKET" --arg reason "Public ACL grant detected" '{control:$control,bucket:$bucket,reason:$reason}')")
+  failed_entries+=("$(jq -n \
+    --arg control "2.3.4" \
+    --arg bucket "$SPACES_BUCKET" \
+    --arg reason "Public ACL grant detected" \
+    '{control:$control,bucket:$bucket,reason:$reason}')")
 fi
+
 
 # 2) Policy check - kiểm tra bucket policy public
 log "INFO" "Checking bucket policy status"
@@ -41,7 +52,7 @@ if [[ -n "$policy_status" ]]; then
   is_public=$(echo "$policy_status" | jq -r '.PolicyStatus.IsPublic')
   if [[ "$is_public" == "true" ]]; then
     log "ERROR" "Bucket policy allows public access"
-    failed_entries+=("$(jq -n --arg control "3.1" --arg bucket "$SPACES_BUCKET" --arg reason "Bucket policy is public" '{control:$control,bucket:$bucket,reason:$reason}')")
+    failed_entries+=("$(jq -n --arg control "2.3.4" --arg bucket "$SPACES_BUCKET" --arg reason "Bucket policy is public" '{control:$control,bucket:$bucket,reason:$reason}')")
   fi
 fi
 
@@ -52,7 +63,7 @@ if [[ -n "$bpa" ]]; then
   all_enabled=$(echo "$bpa" | jq -r '[.PublicAccessBlockConfiguration[]] | all')
   if [[ "$all_enabled" != "true" ]]; then
     log "WARN" "Public access block not fully enabled"
-    failed_entries+=("$(jq -n --arg control "3.1" --arg bucket "$SPACES_BUCKET" --arg reason "Public access block not fully enabled" '{control:$control,bucket:$bucket,reason:$reason}')")
+    failed_entries+=("$(jq -n --arg control "2.3.4" --arg bucket "$SPACES_BUCKET" --arg reason "Public access block not fully enabled" '{control:$control,bucket:$bucket,reason:$reason}')")
   fi
 fi
 
@@ -62,12 +73,12 @@ lifecycle_days="none"
 lc=$(aws s3api get-bucket-lifecycle-configuration --bucket "$SPACES_BUCKET" --endpoint-url "$SPACES_ENDPOINT" 2>/dev/null || true)
 if [[ -z "$lc" ]]; then
   log "WARN" "No lifecycle rule configured"
-  failed_entries+=("$(jq -n --arg control "3.2" --arg bucket "$SPACES_BUCKET" --arg reason "No lifecycle rule" '{control:$control,bucket:$bucket,reason:$reason}')")
+  failed_entries+=("$(jq -n --arg control "2.3.3" --arg bucket "$SPACES_BUCKET" --arg reason "No lifecycle rule" '{control:$control,bucket:$bucket,reason:$reason}')")
 else
   lifecycle_days=$(echo "$lc" | jq -r '.Rules[0].Expiration.Days // "none"')
   if [[ "$lifecycle_days" == "none" ]]; then
     log "WARN" "Lifecycle has no Expiration.Days"
-    failed_entries+=("$(jq -n --arg control "3.2" --arg bucket "$SPACES_BUCKET" --arg reason "Lifecycle missing Expiration.Days" '{control:$control,bucket:$bucket,reason:$reason}')")
+    failed_entries+=("$(jq -n --arg control "2.3.3" --arg bucket "$SPACES_BUCKET" --arg reason "Lifecycle missing Expiration.Days" '{control:$control,bucket:$bucket,reason:$reason}')")
   elif [[ "$lifecycle_days" != "$EXPECTED_EXPIRE_DAYS" ]]; then
     log "WARN" "Lifecycle days=$lifecycle_days differs from expected $EXPECTED_EXPIRE_DAYS"
   else

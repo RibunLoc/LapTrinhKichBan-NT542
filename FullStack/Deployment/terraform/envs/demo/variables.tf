@@ -69,11 +69,6 @@ variable "ssh_key_names" {
   type        = list(string)
 }
 
-variable "ssh_key_ids" {
-  description = "DigitalOcean SSH key IDs"
-  type        = list(number)
-}
-
 variable "volume_size_gb" {
   description = "Block storage size in GB"
   type        = number
