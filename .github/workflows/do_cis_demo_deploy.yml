@@ -96,9 +96,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq awscli python3-pip openssh-client netcat-openbsd
+          sudo apt-get install -y jq python3-pip openssh-client netcat-openbsd
           python3 -m pip install --upgrade pip
-          python3 -m pip install ansible
+          python3 -m pip install ansible awscli
 
       - name: Generate ephemeral SSH key for this run
         id: sshkey
