@@ -2,7 +2,7 @@
 # Dynamic inventory sinh từ biến môi trường.
 # Sử dụng:
 #   HOSTS="1.2.3.4 5.6.7.8" ANSIBLE_USER=devops SSH_KEY_PATH=~/.ssh/id_rsa \
-#     ansible-playbook -i <(ansible/inventory/env_inventory.sh) playbooks/01_harden.yml
+#     ansible-playbook -i <(bash ansible/inventory/env_inventory.sh) playbooks/01_harden.yml
 set -euo pipefail
 
 if [[ -z "${HOSTS:-}" ]]; then

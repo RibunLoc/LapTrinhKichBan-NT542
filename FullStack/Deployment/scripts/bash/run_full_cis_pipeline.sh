@@ -14,6 +14,32 @@ log() { echo "[$(date --iso-8601=seconds)] [$1] ${*:2}" | tee -a "$PIPELINE_LOG"
 
 require_bin() { command -v "$1" >/dev/null 2>&1 || { log "ERROR" "Missing dependency: $1"; exit 2; }; }
 
+wait_for_tcp() {
+  local host="$1"
+  local port="$2"
+  local timeout_seconds="$3"
+  local start now
+  start=$(date +%s)
+  while :; do
+    if command -v nc >/dev/null 2>&1; then
+      if nc -z "$host" "$port" >/dev/null 2>&1; then
+        return 0
+      fi
+    else
+      # shellcheck disable=SC2317
+      if (echo >/dev/tcp/"$host"/"$port") >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+
+    now=$(date +%s)
+    if (( now - start >= timeout_seconds )); then
+      return 1
+    fi
+    sleep "${SSH_WAIT_INTERVAL:-5}"
+  done
+}
+
 usage() {
   cat <<'EOF'
 run_full_cis_pipeline.sh - Terraform apply -> Ansible config -> CIS controls
@@ -39,6 +65,8 @@ Optional:
   HOSTS="ip1 ip2"            # override hosts list; otherwise uses terraform output droplet_ip
   SSH_USER=devops            # used by CIS scripts
   SSH_USER_FALLBACK=root
+  SSH_WAIT_SECONDS=300       # wait for SSH to be reachable after apply
+  SSH_WAIT_INTERVAL=5
 EOF
 }
 
@@ -59,6 +87,26 @@ fi
 export DIGITALOCEAN_ACCESS_TOKEN="${DIGITALOCEAN_ACCESS_TOKEN:-${DO_ACCESS_TOKEN:-}}"
 if [[ -n "${DO_ACCESS_TOKEN:-}" && -z "${TF_VAR_do_token:-}" ]]; then
   export TF_VAR_do_token="$DO_ACCESS_TOKEN"
+fi
+
+# Convenience mappings (when users only fill high-level vars in .env)
+if [[ -n "${SPACES_ACCESS_KEY_ID:-}" && -z "${TF_VAR_spaces_access_id:-}" ]]; then
+  export TF_VAR_spaces_access_id="$SPACES_ACCESS_KEY_ID"
+fi
+if [[ -n "${SPACES_SECRET_ACCESS_KEY:-}" && -z "${TF_VAR_spaces_secret_key:-}" ]]; then
+  export TF_VAR_spaces_secret_key="$SPACES_SECRET_ACCESS_KEY"
+fi
+if [[ -n "${SPACES_BUCKET:-}" && -z "${TF_VAR_spaces_bucket_name:-}" ]]; then
+  export TF_VAR_spaces_bucket_name="$SPACES_BUCKET"
+fi
+if [[ -n "${SPACES_REGION:-}" && -z "${TF_VAR_spaces_region:-}" ]]; then
+  export TF_VAR_spaces_region="$SPACES_REGION"
+fi
+if [[ -n "${SLACK_WEBHOOK_URL:-}" && -z "${TF_VAR_slack_webhook_url:-}" ]]; then
+  export TF_VAR_slack_webhook_url="$SLACK_WEBHOOK_URL"
+fi
+if [[ -n "${ALERT_EMAILS_JSON:-}" && -z "${TF_VAR_alert_emails:-}" ]]; then
+  export TF_VAR_alert_emails="$ALERT_EMAILS_JSON"
 fi
 
 # Normalize Spaces creds for AWS CLI (used by spaces controls)
@@ -124,9 +172,24 @@ export SSH_PORT SSH_KEY_PATH
 
 log "INFO" "HOSTS=$HOSTS SSH_PORT=$SSH_PORT SSH_KEY_PATH=${SSH_KEY_PATH:-<unset>}"
 
+# Wait for SSH on all hosts (useful right after terraform apply)
+SSH_WAIT_SECONDS="${SSH_WAIT_SECONDS:-300}"
+SSH_WAIT_INTERVAL="${SSH_WAIT_INTERVAL:-5}"
+log "INFO" "Waiting for SSH connectivity (timeout=${SSH_WAIT_SECONDS}s interval=${SSH_WAIT_INTERVAL}s)"
+for h in $HOSTS; do
+  if wait_for_tcp "$h" "$SSH_PORT" "$SSH_WAIT_SECONDS"; then
+    log "INFO" "SSH port reachable: $h:$SSH_PORT"
+  else
+    log "ERROR" "SSH not reachable within timeout: $h:$SSH_PORT"
+    exit 1
+  fi
+done
+
 # Avoid host key problems in Ansible (ephemeral demo droplets often reuse IPs)
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
 export ANSIBLE_SSH_COMMON_ARGS="${ANSIBLE_SSH_COMMON_ARGS:- -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null }"
+# Also apply the same relaxed host-key behaviour to SSH-based CIS controls.
+export SSH_STRICT_HOST_KEY_CHECKING="${SSH_STRICT_HOST_KEY_CHECKING:-no}"
 
 INV_ROOT="$(mktemp)"
 INV_DEVOPS="$(mktemp)"
@@ -134,7 +197,7 @@ trap 'rm -f "$INV_ROOT" "$INV_DEVOPS"' EXIT
 
 if [[ "$RUN_HARDEN" == "1" ]]; then
   log "INFO" "Generating Ansible inventory (root) -> $INV_ROOT"
-  HOSTS="$HOSTS" ANSIBLE_USER="root" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true ansible/inventory/env_inventory.sh >"$INV_ROOT"
+  HOSTS="$HOSTS" ANSIBLE_USER="root" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true bash ansible/inventory/env_inventory.sh >"$INV_ROOT"
   log "INFO" "Running Ansible harden baseline (root)"
   ansible-playbook -i "$INV_ROOT" ansible/playbooks/01_harden.yml | tee -a "$PIPELINE_LOG"
 else
@@ -142,7 +205,7 @@ else
 fi
 
 log "INFO" "Generating Ansible inventory (devops) -> $INV_DEVOPS"
-HOSTS="$HOSTS" ANSIBLE_USER="${ANSIBLE_USER_POST_HARDEN:-devops}" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true ansible/inventory/env_inventory.sh >"$INV_DEVOPS"
+HOSTS="$HOSTS" ANSIBLE_USER="${ANSIBLE_USER_POST_HARDEN:-devops}" SSH_KEY_PATH="$SSH_KEY_PATH" SSH_PORT="$SSH_PORT" BECOME=true bash ansible/inventory/env_inventory.sh >"$INV_DEVOPS"
 
 if [[ "$RUN_SECURITY_UPDATES" == "1" ]]; then
   log "INFO" "Running security updates (devops)"
@@ -170,4 +233,3 @@ else
 fi
 
 log "INFO" "Done. Pipeline log: $PIPELINE_LOG"
-

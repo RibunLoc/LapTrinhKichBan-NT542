@@ -1,22 +1,21 @@
-# Control: Droplet 2.1.4 – Chính sách nâng cấp OS
+# Control: Droplet 2.1.4 – Ensure OS upgrade policy is enabled (Automated)
 
 ## Mục tiêu
-Có quy trình nâng cấp OS định kỳ (major/minor) và bằng chứng đã kiểm tra/áp dụng.
+Đảm bảo droplet có chính sách tự động cập nhật bảo mật (vd: `unattended-upgrades` trên Ubuntu) để giảm rủi ro tồn đọng bản vá.
 
-## Cách kiểm automation
-- Ansible audit (check_mode): `ansible/playbooks/02_audit.yml` có thể mở rộng để kiểm `unattended-upgrades` và version.  
-- Script tham chiếu: `scripts/bash/check_droplet.sh` với `RUN_ANSIBLE_AUDIT=1` sẽ gọi playbook audit.
-
-## Cách kiểm manual/CLI
+## Cách kiểm tra bằng CLI/SSH (manual)
 ```bash
-lsb_release -a
-do-release-upgrade -c   # check available upgrade (không chạy)
+ssh devops@<ip> "dpkg -s unattended-upgrades >/dev/null 2>&1 && echo installed || echo missing"
+ssh devops@<ip> "cat /etc/apt/apt.conf.d/20auto-upgrades || true"
 ```
-Hoặc xem log upgrade gần nhất: `/var/log/apt/history.log`.
+Pass khi:
+- `unattended-upgrades` được cài
+- `APT::Periodic::Unattended-Upgrade "1";` tồn tại
 
-## Cách kiểm GUI
-Không có GUI riêng, cần SSH vào droplet để kiểm.
+## Automation (repo)
+- Chạy control: `scripts/bash/controls/droplet_2.1.4_os_upgrade.sh`
+- Runner: `scripts/bash/run_cis_controls.sh`
+- (Config) Ansible harden: `ansible/playbooks/01_harden.yml`
 
-## Evidence khi fail
-- Lưu output `lsb_release` + `do-release-upgrade -c` và/hoặc log apt.  
-- Ghi chú lịch/plan nâng cấp trong `docs/manual_checklist.md`.
+## Evidence khi FAIL
+- Dán output SSH (các file config liên quan).

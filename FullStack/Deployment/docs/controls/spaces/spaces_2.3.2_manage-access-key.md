@@ -1,22 +1,17 @@
-# Control: Spaces 2.3.2 – Quản lý Access Key / Secret Key
+# Control: Spaces 2.3.2 – Manage Access Key / Secret Key for Spaces
 
 ## Mục tiêu
-Không hard-code key trong mã nguồn; key được cấp phát thủ công (DO Console) nhưng sử dụng qua biến môi trường/secret store và có quy trình xoay vòng.
+Không hardcode Spaces Access Key / Secret Key trong mã nguồn; chỉ truyền qua biến môi trường/Secrets của CI.
 
-## Cách thực hiện / automation
-- Tạo Access Key/Secret Key qua DigitalOcean Console (hiện chưa API).  
-- Sử dụng key qua biến môi trường (không commit): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `SPACES_ENDPOINT`.  
-- Terraform/script nạp từ env (TF_VAR_spaces_access_id/secret_key hoặc `.env` local).  
-- Không lưu key thật trong repo; chỉ `.env.example` chứa placeholder.  
-- (Tuỳ chọn) Thiết lập secret ở CI (GitHub Actions secrets) rồi export khi chạy `check_spaces.sh`.
+## Manual (DigitalOcean Dashboard)
+1) DigitalOcean Dashboard → API → Spaces Keys  
+2) Tạo/rotate key theo chính sách nhóm  
+3) Lưu key vào nơi quản lý secret (GitHub Secrets, Vault, ...)
 
-## Cách kiểm manual/CLI
-- Xác nhận không có key thật trong repo: `git grep -n "DO[A-Z0-9]" scripts terraform` (chỉ placeholder).  
-- Kiểm tra env trước khi chạy:  
-  ```bash
-  env | grep -E 'AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)|SPACES_ACCESS'
-  ```
-- Nếu dùng CI: kiểm tra secrets cấu hình ở Settings → Secrets.
+## Automation (repo)
+Repo không tự tạo Spaces key (vì thường phải tạo qua UI), nhưng tự động hóa việc **sử dụng key an toàn**:
+- `.env`/CI Secrets: `SPACES_ACCESS_KEY_ID`, `SPACES_SECRET_ACCESS_KEY`
+- Controls: `scripts/bash/controls/spaces_2.3.2_manage_access_key.sh` sẽ FAIL nếu thiếu env var hoặc phát hiện key bị hardcode trong Terraform `.tf`/`.tfvars` (best-effort).
 
-## Evidence khi fail
-- Screenshot/record secret đặt sai chỗ (repo), hoặc thiếu env; ghi vào `docs/manual_checklist.md`.
+## Evidence
+- Screenshot trang Spaces Keys hoặc log rotate key (nếu có).

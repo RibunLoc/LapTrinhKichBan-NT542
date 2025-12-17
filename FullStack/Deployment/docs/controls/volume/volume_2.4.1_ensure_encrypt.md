@@ -1,22 +1,15 @@
-# Control: Volume 2.4.1 – Đảm bảo mã hóa & mount an toàn
+# Control: Volume 2.4.1 – Ensure Volumes are Encrypted
 
 ## Mục tiêu
-Block Storage phải được mã hóa (mặc định DO encrypt at rest) và nếu dùng trên Droplet thì mount với LUKS + tùy chọn noexec/nodev/nosuid.
+Đảm bảo Block Storage Volume được mã hóa “at rest”.
 
-## Cách thực hiện / automation
-- Terraform `modules/volume` tạo volume; Ansible playbook `luks_volume.yml` (hoặc role) thiết lập LUKS, filesystem, mount.  
-- Script `scripts/bash/check_volume.sh` kiểm:
-  - Volume có tag `ENV_TAG`.  
-  - Volume đã attach droplet.  
-  - Nếu đặt `SSH_TARGET`, kiểm `/etc/fstab` có `noexec,nodev,nosuid` cho mountpoint (mặc định `/data`).
-- DO tự mã hóa block storage at rest; LUKS thêm lớp mã hóa trong VM.
+## Ghi chú về DigitalOcean
+DigitalOcean Block Storage mặc định được mã hóa at rest ở tầng provider. Trong demo, nhóm bổ sung thêm lựa chọn LUKS (mã hóa trong OS) để minh hoạ “defense in depth”.
 
-## Cách kiểm manual/CLI
-```bash
-doctl compute volume list --output json | jq -r '.[] | [.name,.droplet_ids] | @tsv'
-ssh root@<ip> "grep /data /etc/fstab"
-```
-Nếu dùng LUKS: `lsblk -f` và `cryptsetup status <mapper>` để xác nhận.
+## Automation (repo)
+- Kiểm tra provider-level + trạng thái attach/tag: `scripts/bash/controls/volume_2.4.1_ensure_encrypt.sh`
+- (Tuỳ chọn) Mã hóa trong OS bằng LUKS: `ansible/luks_volume.yml` (có thể phá dữ liệu nếu volume chưa được chuẩn bị)
 
-## Evidence khi fail
-- Lưu output doctl/grep/lsblk; nếu phải sửa mount option, ghi lại vào `docs/manual_checklist.md`.
+## Evidence
+- PASS: report JSON trong `reports/` của control 2.4.1.
+- FAIL: log trong `logs/` + trạng thái volume/droplet attach.

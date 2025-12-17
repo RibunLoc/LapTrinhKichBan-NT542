@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 CONTROLS_DIR="$SCRIPT_DIR/controls"
 RUN_TS="$(date -u +%Y%m%d%H%M%S)"
+FAIL_ON_WARN="${FAIL_ON_WARN:-0}"
 
 # Colors (disabled when NO_COLOR is set or stdout is not a TTY)
 USE_COLOR=0
@@ -26,6 +27,10 @@ green() { color "32" "$*"; }
 red() { color "31" "$*"; }
 yellow() { color "33" "$*"; }
 dim() { color "2" "$*"; }
+
+ICON_PASS="${ICON_PASS:-✓}"
+ICON_FAIL="${ICON_FAIL:-✗}"
+ICON_WARN="${ICON_WARN:-!}"
 
 # Load root .env if present so all controls share config
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -97,13 +102,16 @@ for c in "${controls[@]}"; do
 
   status_label="PASS"
   if [[ $exit_code -ne 0 ]]; then
-    overall_fail=1
     if [[ $exit_code -eq 2 ]]; then
       status_label="WARN"
       ((warn_count++)) || true
+      if [[ "$FAIL_ON_WARN" == "1" ]]; then
+        overall_fail=1
+      fi
     else
       status_label="FAIL"
       ((fail_count++)) || true
+      overall_fail=1
     fi
   else
     ((pass_count++)) || true
@@ -135,9 +143,9 @@ for line in "${summary_lines[@]}"; do
   status="${line##* }"
   body="${line% *}"
   case "$status" in
-    PASS) printf '%s %s\n' "$(green "[PASS]")" "$body" ;;
-    FAIL) printf '%s %s\n' "$(red "[FAIL]")" "$body" ;;
-    WARN) printf '%s %s\n' "$(yellow "[WARN]")" "$body" ;;
+    PASS) printf '%s %s\n' "$(green "[$ICON_PASS PASS]")" "$body" ;;
+    FAIL) printf '%s %s\n' "$(red "[$ICON_FAIL FAIL]")" "$body" ;;
+    WARN) printf '%s %s\n' "$(yellow "[$ICON_WARN WARN]")" "$body" ;;
     *) printf '%s %s\n' "[INFO]" "$line" ;;
   esac
 done

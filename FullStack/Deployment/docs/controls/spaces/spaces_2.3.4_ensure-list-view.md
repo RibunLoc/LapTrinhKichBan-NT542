@@ -1,19 +1,14 @@
-# Control: Spaces 2.3.4 – Hạn chế liệt kê/ truy cập bucket
+# Control: Spaces 2.3.4 – Ensure bucket/object listing is restricted (Automated)
 
 ## Mục tiêu
-Bucket mặc định private; hạn chế khả năng liệt kê/đọc từ công cộng.
+Bucket phải private (không public list/read), tránh rò rỉ dữ liệu do cấu hình ACL/policy sai.
 
-## Cách thực hiện / automation
-- Terraform đặt `acl = "private"` cho Spaces.  
-- Có thể bổ sung bucket policy deny public (qua AWS S3 API) nếu cần IP allowlist.  
-- Script `check_spaces.sh` kiểm tra public ACL/policy; fail nếu phát hiện `AllUsers/AuthenticatedUsers` hoặc `PolicyStatus.IsPublic=true`.
+## IaC (Terraform)
+Module Spaces mặc định `acl = "private"` và cấu hình theo chuẩn demo (private-by-default).
 
-## Cách kiểm manual/CLI
-```bash
-aws s3api get-bucket-acl --bucket "$SPACES_BUCKET" --endpoint-url "$SPACES_ENDPOINT"
-aws s3api get-bucket-policy-status --bucket "$SPACES_BUCKET" --endpoint-url "$SPACES_ENDPOINT"  # nếu có policy
-```
-Pass khi không có grant public và policy không public.
+## Automation (repo)
+- Chạy control: `scripts/bash/controls/spaces_2.3.4_private_access.sh`
+- Control sẽ FAIL nếu bucket có dấu hiệu public (ACL/policy public).
 
-## Evidence khi fail
-- Lưu output ACL/policy hoặc screenshot Settings → Permissions; ghi lại bước khắc phục trong `docs/manual_checklist.md`.
+## Evidence khi FAIL
+- Dán output `aws s3api get-bucket-acl` / `get-bucket-policy-status`.

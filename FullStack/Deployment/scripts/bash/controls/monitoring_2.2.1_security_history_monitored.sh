@@ -87,7 +87,7 @@ if [[ "$pass" != "true" ]]; then
   echo "  Open: https://cloud.digitalocean.com/settings/security"
   echo "  Save evidence to: $SECURITY_HISTORY_EVIDENCE_FILE"
   echo "  Tip: update evidence file to refresh mtime"
-  exit 1
+  exit 2
 fi
 
 echo "PASS [$CONTROL_ID] Security History evidence present (manual check recorded)"

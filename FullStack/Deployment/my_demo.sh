@@ -48,23 +48,17 @@ SSH_TARGET="devops@$DROPLET_IP"
 
 # Build dynamic inventory devops (post-harden)
 INV_DEVOPS="$(mktemp)"
-HOSTS="$HOSTS" ANSIBLE_USER="devops" SSH_KEY_PATH=$SSH_KEY_PATH SSH_PORT=$SSH_PORT BECOME=true ansible/inventory/env_inventory.sh > "$INV_DEVOPS"
+HOSTS="$HOSTS" ANSIBLE_USER="devops" SSH_KEY_PATH=$SSH_KEY_PATH SSH_PORT=$SSH_PORT BECOME=true bash ansible/inventory/env_inventory.sh > "$INV_DEVOPS"
 pe "cat $INV_DEVOPS"
 
 pe "# Run security updates (devops)"
 pe "ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i $INV_DEVOPS ansible/security_updates.yml"
 
 pe "# LUKS Encryption"
-pe "ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i $INV_DEVOPS ansible/luks_volume.yml -e \"luks_device=\${LUKS_DEVICE:-/dev/disk/by-id/scsi-0DO_Volume_demo-data} luks_name=\${LUKS_NAME:-securedata} mount_point=\${MOUNT_POINT:-/data} luks_passphrase=\${LUKS_PASSPHRASE:-ChangeMeLabOnly}\""
+pe "if [[ \${RUN_LUKS:-0} == 1 && \${CONFIRM_LUKS:-0} == 1 ]]; then ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i $INV_DEVOPS ansible/luks_volume.yml -e \"luks_device=\${LUKS_DEVICE:-/dev/disk/by-id/scsi-0DO_Volume_demo-data} luks_name=\${LUKS_NAME:-securedata} mount_point=\${MOUNT_POINT:-/data} luks_passphrase=\${LUKS_PASSPHRASE:-ChangeMeLabOnly}\"; else echo 'Skip LUKS (set RUN_LUKS=1 CONFIRM_LUKS=1 to enable)'; fi"
 
 pe "# Run CIS checks"
-pe "ANSIBLE_INVENTORY=$INV_DEVOPS RUN_ANSIBLE_AUDIT=1 CHECK_ALERTS=1 ./scripts/bash/check_droplet.sh"
-pe "clear"
-pe "ADMIN_CIDRS=\"\${ADMIN_CIDRS:-27.65.249.253/32}\" ./scripts/bash/check_firewall.sh"
-pe "clear"
-pe "./scripts/bash/check_volume.sh"
-pe "clear"
-pe "./scripts/bash/check_spaces.sh"
+pe "FAIL_ON_WARN=\${FAIL_ON_WARN:-0} bash scripts/bash/run_cis_controls.sh"
 
 pe "ls -1 reports"
 

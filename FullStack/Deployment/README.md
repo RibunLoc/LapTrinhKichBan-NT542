@@ -1,43 +1,69 @@
-# DigitalOcean CIS Demo – Deployment
+# DigitalOcean CIS Demo – Deployment (Terraform + Ansible + CIS Controls)
 
-Mục tiêu: dựng hạ tầng DigitalOcean bằng mã nguồn, harden cơ bản và có script audit CIS (automation + manual).
+Mục tiêu: triển khai hạ tầng DigitalOcean bằng IaC (Terraform), harden OS bằng Ansible, và chạy các bài kiểm tra CIS theo từng control (automation + manual evidence).
 
-## Cấu trúc nhanh
-- `terraform/`: module + env `demo` để apply.
-- `ansible/`: playbook harden/audit Droplet.
-- `scripts/`: bash/powershell check CIS control qua doctl/API/SSH.
-- `docs/`: phương pháp, control detail, manual checklist.
-- `reports/`: sinh ra khi chạy script/audit.
+## Cấu trúc thư mục chính
+- `terraform/`: hạ tầng demo (Droplet, VPC, Firewall, Volume, Spaces, Monitoring/Alerts).
+- `ansible/`: playbooks harden/audit + các playbook bổ sung (security updates, LUKS volume).
+- `scripts/bash/controls/`: mỗi file = 1 CIS control (PASS/FAIL/WARN) + sinh `logs/` + `reports/`.
+- `scripts/bash/run_cis_controls.sh`: chạy toàn bộ controls và in summary màu.
+- `scripts/bash/run_full_cis_pipeline.sh`: chạy full pipeline Terraform → Ansible → CIS.
+- `docs/controls/`: mô tả control + phần manual.
 
-## Triển khai
+## Chuẩn bị biến môi trường
+Tạo file `.env` từ mẫu:
 ```bash
-cd terraform/envs/demo
-terraform init
-terraform apply -var-file=terraform.tfvars
+cd FullStack/Deployment
+cp .env.example .env
 ```
 
-Terraform tạo VPC, Droplet (backup/monitoring), Firewall, Volume, Spaces (private + CDN), optional DB, alert CPU.
+Khuyến nghị: set Terraform variables bằng `TF_VAR_*` trong `.env` (không hardcode `terraform.tfvars`).
+Chi tiết từng bước demo: `docs/demo_lab_runbook.md`.
 
-## Harden & audit OS
+## Chạy full pipeline (local)
+Từ `FullStack/Deployment`:
 ```bash
-cd ../ansible
-ansible-playbook -i inventory/hosts.ini playbooks/01_harden.yml
-ansible-playbook -i inventory/hosts.ini playbooks/02_audit.yml
+bash scripts/bash/run_full_cis_pipeline.sh
 ```
 
-## Audit hạ tầng (automation)
+Tùy chọn:
+- `RUN_APPLY=1` để `terraform apply` (mặc định pipeline vẫn chạy `plan`).
+- `RUN_LUKS=1 CONFIRM_LUKS=1` để chạy `ansible/luks_volume.yml` (có thể phá dữ liệu volume nếu chưa LUKS).
+- `FAIL_ON_WARN=1` để coi WARN (manual/missing evidence) là fail.
+
+## Chạy toàn bộ CIS controls (không deploy)
+Từ `FullStack/Deployment`:
 ```bash
-./scripts/bash/check_droplet.sh
-./scripts/bash/check_firewall.sh
-SPACES_BUCKET=my-bucket ./scripts/bash/check_spaces.sh
-SSH_TARGET=root@<droplet-ip> ./scripts/bash/check_volume.sh
+bash scripts/bash/run_cis_controls.sh
 ```
-PowerShell: `./scripts/powershell/Invoke-CisCheck-Droplet.ps1 -EnvTag env:demo`
 
-Báo cáo JSON nằm trong `reports/`, log trong `logs/`, exit code !=0 khi có control fail.
+Chạy 1 control cụ thể:
+```bash
+bash scripts/bash/controls/droplet_2.1.1_backups.sh
+```
 
-## Manual checklist
-Mở `docs/manual_checklist.md` và từng file `docs/controls/*.md` cho control manual (vd: member/2FA). Ghi evidence khi fail/pass.
+## Manual evidence (ví dụ 2.2.1 – Security History)
+Control 2.2.1 là account-level và cần evidence thủ công (Dashboard → Settings → Security).
 
-## CI gợi ý
-Workflow `.github/workflows/cis_check.yml` (kèm repo) chạy terraform fmt/validate, shellcheck, và audit script; upload báo cáo làm artifact.
+Tạo evidence file theo template:
+```bash
+mkdir -p reports/manual
+cp docs/templates/security_history_2.2.1.md reports/manual/security_history_2.2.1.md
+```
+
+Nếu thiếu evidence, control sẽ trả `WARN` (exit code `2`) để bạn không “giả PASS”.
+
+## GitHub Actions (automation end-to-end)
+Workflow: `.github/workflows/do_cis_demo_deploy.yml`
+- Chạy: Terraform → Ansible → CIS controls
+- Upload artifacts: `FullStack/Deployment/logs/` và `FullStack/Deployment/reports/`
+- Có tuỳ chọn `destroy_after` để dọn hạ tầng (tiết kiệm chi phí)
+
+### Secrets cần tạo trong repo
+- `DO_ACCESS_TOKEN`
+- `SPACES_ACCESS_KEY_ID`
+- `SPACES_SECRET_ACCESS_KEY`
+- `SLACK_WEBHOOK_URL` (optional)
+- `ALERT_EMAILS_JSON` (optional, ví dụ `["security@example.com"]`)
+
+Khuyến nghị: dùng GitHub **Environments** + required reviewers để có “approve” trước khi chạy workflow trên môi trường thật.
