@@ -1,0 +1,209 @@
+name: DO CIS Demo - Deploy & Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "GitHub Environment name (use protection rules for approvals)"
+        required: true
+        default: "demo"
+      region:
+        description: "DigitalOcean region (e.g. sgp1)"
+        required: true
+        default: "sgp1"
+      spaces_region:
+        description: "Spaces region (e.g. sgp1)"
+        required: true
+        default: "sgp1"
+      spaces_bucket_prefix:
+        description: "Spaces bucket name prefix (bucket will be <prefix>-<run_id>)"
+        required: true
+        default: "cis-spaces"
+      enable_cdn:
+        description: "Enable CDN for Spaces bucket"
+        type: boolean
+        required: true
+        default: true
+      run_apply:
+        description: "Run terraform apply (if false: plan only)"
+        type: boolean
+        required: true
+        default: true
+      run_harden:
+        description: "Run Ansible harden baseline (root)"
+        type: boolean
+        required: true
+        default: true
+      run_security_updates:
+        description: "Run Ansible security updates (devops)"
+        type: boolean
+        required: true
+        default: true
+      run_luks:
+        description: "Run LUKS encryption playbook (destructive if volume not yet LUKS)"
+        type: boolean
+        required: true
+        default: false
+      confirm_luks:
+        description: "Must be true if run_luks=true"
+        type: boolean
+        required: true
+        default: false
+      fail_on_warn:
+        description: "Fail workflow when a control returns WARN (exit code 2)"
+        type: boolean
+        required: true
+        default: false
+      destroy_after:
+        description: "Destroy terraform resources at the end (cost control)"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: do-cis-demo-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy_and_audit:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: FullStack/Deployment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Setup doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_ACCESS_TOKEN }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq awscli python3-pip openssh-client netcat-openbsd
+          python3 -m pip install --upgrade pip
+          python3 -m pip install ansible
+
+      - name: Generate ephemeral SSH key for this run
+        id: sshkey
+        run: |
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          KEY_PATH="$HOME/.ssh/do_cis_demo_ed25519"
+          ssh-keygen -t ed25519 -N "" -f "$KEY_PATH" -C "gha-${GITHUB_REPOSITORY}-${GITHUB_RUN_ID}" >/dev/null
+          echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Register SSH public key in DigitalOcean
+        id: do_sshkey
+        env:
+          KEY_PATH: ${{ steps.sshkey.outputs.key_path }}
+        run: |
+          NAME="gha-${GITHUB_REPOSITORY_OWNER}-${GITHUB_RUN_ID}"
+          KEY_ID="$(doctl compute ssh-key create "$NAME" --public-key "$(cat "${KEY_PATH}.pub")" -o json | jq -r '.[0].id')"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "id=$KEY_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Detect runner public IP (for SSH allowlist)
+        id: ip
+        run: |
+          IP="$(curl -fsSL https://api.ipify.org)"
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+
+      - name: Run full pipeline (Terraform -> Ansible -> CIS)
+        env:
+          DO_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
+
+          # Terraform variables
+          TF_VAR_do_token: ${{ secrets.DO_ACCESS_TOKEN }}
+          TF_VAR_spaces_access_id: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          TF_VAR_spaces_secret_key: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          TF_VAR_region: ${{ inputs.region }}
+          TF_VAR_spaces_region: ${{ inputs.spaces_region }}
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_owner: team-ops
+          TF_VAR_admin_cidrs: '["${{ steps.ip.outputs.ip }}/32"]'
+          TF_VAR_ssh_key_names: '["${{ steps.do_sshkey.outputs.name }}"]'
+          TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
+          TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
+          TF_VAR_spaces_expire_days: 30
+          TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
+
+          # CIS script defaults
+          ENV_TAG: env:${{ inputs.environment }}
+          SSH_KEY_PATH: ${{ steps.sshkey.outputs.key_path }}
+          SSH_PORT: "22"
+          SSH_USER: devops
+          SSH_USER_FALLBACK: root
+
+          # Spaces checks
+          SPACES_BUCKET: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
+          SPACES_REGION: ${{ inputs.spaces_region }}
+          SPACES_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
+          SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          SPACES_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+
+          # Pipeline toggles
+          RUN_APPLY: ${{ inputs.run_apply && '1' || '0' }}
+          RUN_HARDEN: ${{ inputs.run_harden && '1' || '0' }}
+          RUN_SECURITY_UPDATES: ${{ inputs.run_security_updates && '1' || '0' }}
+          RUN_LUKS: ${{ inputs.run_luks && '1' || '0' }}
+          CONFIRM_LUKS: ${{ inputs.confirm_luks && '1' || '0' }}
+          RUN_CIS: "1"
+
+          # Runner behaviour
+          FAIL_ON_WARN: ${{ inputs.fail_on_warn && '1' || '0' }}
+          SSH_WAIT_SECONDS: "300"
+        run: |
+          bash scripts/bash/run_full_cis_pipeline.sh
+
+      - name: Upload logs + reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cis-demo-artifacts-${{ github.run_id }}
+          path: |
+            FullStack/Deployment/logs
+            FullStack/Deployment/reports
+
+      - name: Destroy resources (optional)
+        if: always() && inputs.destroy_after
+        env:
+          TF_VAR_do_token: ${{ secrets.DO_ACCESS_TOKEN }}
+          TF_VAR_spaces_access_id: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          TF_VAR_spaces_secret_key: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          TF_VAR_region: ${{ inputs.region }}
+          TF_VAR_spaces_region: ${{ inputs.spaces_region }}
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_owner: team-ops
+          TF_VAR_admin_cidrs: '["${{ steps.ip.outputs.ip }}/32"]'
+          TF_VAR_ssh_key_names: '["${{ steps.do_sshkey.outputs.name }}"]'
+          TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
+          TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
+          TF_VAR_spaces_expire_days: 30
+          TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
+        run: |
+          terraform -chdir=terraform/envs/demo destroy -auto-approve -input=false || true
+
+      - name: Cleanup DigitalOcean SSH key (always)
+        if: always()
+        run: |
+          if [[ -n "${{ steps.do_sshkey.outputs.id }}" ]]; then
+            doctl compute ssh-key delete "${{ steps.do_sshkey.outputs.id }}" -f || true
+          fi
