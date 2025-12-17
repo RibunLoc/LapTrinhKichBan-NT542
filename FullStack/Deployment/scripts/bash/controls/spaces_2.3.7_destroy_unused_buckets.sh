@@ -22,6 +22,9 @@ WANTED_BUCKETS_FILE="${WANTED_BUCKETS_FILE:-$ROOT_DIR/scripts/wanted_buckets.txt
 # Optional: read wanted bucket list from terraform state JSON (terraform show -json output)
 TFSTATE_JSON_PATH="${TFSTATE_JSON_PATH:-}"
 
+# Optional scope filter: only evaluate buckets with this prefix (recommended for demo safety)
+SPACES_BUCKET_PREFIX="${SPACES_BUCKET_PREFIX:-${BUCKET_NAME_PREFIX:-}}"
+
 # Safety toggles (do NOT delete by default)
 DRY_RUN="${DRY_RUN:-1}"
 APPROVE_DELETE="${APPROVE_DELETE:-0}"
@@ -29,6 +32,7 @@ SKIP_CONFIRM="${SKIP_CONFIRM:-0}"
 
 log "INFO" "Control $CONTROL_ID: Ensure unused Spaces buckets are removed (allowlist enforced)"
 log "INFO" "WANTED_BUCKETS_FILE=$WANTED_BUCKETS_FILE TFSTATE_JSON_PATH=${TFSTATE_JSON_PATH:-none}"
+log "INFO" "SPACES_BUCKET_PREFIX=${SPACES_BUCKET_PREFIX:-<none>}"
 log "INFO" "DRY_RUN=$DRY_RUN APPROVE_DELETE=$APPROVE_DELETE SKIP_CONFIRM=$SKIP_CONFIRM"
 
 declare -A WANTED=()
@@ -36,8 +40,7 @@ declare -A WANTED=()
 load_wanted_from_file() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
-    log "ERROR" "Missing wanted buckets file: $file"
-    return 1
+    return 0
   fi
 
   while IFS= read -r line; do
@@ -46,6 +49,13 @@ load_wanted_from_file() {
     [[ -z "$line" ]] && continue
     WANTED["$line"]=1
   done <"$file"
+}
+
+add_wanted_bucket() {
+  local b="$1"
+  b="$(echo "$b" | tr -d '\r' | xargs)"
+  [[ -z "$b" ]] && return 0
+  WANTED["$b"]=1
 }
 
 load_wanted_from_tfstate_json() {
@@ -72,20 +82,28 @@ load_wanted_from_tfstate_json() {
   fi
 
   for b in "${buckets[@]}"; do
-    b="$(echo "$b" | tr -d '\r' | xargs)"
-    [[ -z "$b" ]] && continue
-    WANTED["$b"]=1
+    add_wanted_bucket "$b"
   done
 }
 
 if [[ -n "$TFSTATE_JSON_PATH" ]]; then
-  load_wanted_from_tfstate_json "$TFSTATE_JSON_PATH" || load_wanted_from_file "$WANTED_BUCKETS_FILE"
+  load_wanted_from_tfstate_json "$TFSTATE_JSON_PATH" || true
 else
   load_wanted_from_file "$WANTED_BUCKETS_FILE"
 fi
 
+# Always treat the demo bucket as "wanted" if provided via env (common in CI runs)
+if [[ -n "${SPACES_BUCKET:-}" ]]; then
+  add_wanted_bucket "$SPACES_BUCKET"
+fi
+
+# Never consider the Terraform state bucket "unused" (defense-in-depth)
+if [[ -n "${TFSTATE_BUCKET:-}" ]]; then
+  add_wanted_bucket "$TFSTATE_BUCKET"
+fi
+
 if [[ ${#WANTED[@]} -eq 0 ]]; then
-  log "ERROR" "Wanted bucket list is empty"
+  log "ERROR" "Wanted bucket list is empty (provide SPACES_BUCKET, WANTED_BUCKETS_FILE, or TFSTATE_JSON_PATH)"
   exit 2
 fi
 
@@ -96,6 +114,16 @@ failed_entries=()
 unused=()
 
 for b in "${actual[@]}"; do
+  if [[ -n "${TFSTATE_BUCKET:-}" && "$b" == "$TFSTATE_BUCKET" ]]; then
+    log "INFO" "SKIP: $b (Terraform state bucket)"
+    continue
+  fi
+
+  if [[ -n "$SPACES_BUCKET_PREFIX" && "$b" != "$SPACES_BUCKET_PREFIX"* ]]; then
+    log "INFO" "SKIP: $b (out of scope; prefix=$SPACES_BUCKET_PREFIX)"
+    continue
+  fi
+
   if [[ -n "${WANTED[$b]:-}" ]]; then
     log "INFO" "KEEP: $b (in allowlist)"
   else
@@ -156,4 +184,3 @@ if [[ "$pass" != "true" ]]; then
 fi
 
 echo "PASS [$CONTROL_ID] No unused buckets found"
-

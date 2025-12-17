@@ -183,6 +183,7 @@ jobs:
 
           # Spaces checks
           SPACES_BUCKET: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
+          SPACES_BUCKET_PREFIX: ${{ inputs.spaces_bucket_prefix }}
           SPACES_REGION: ${{ inputs.spaces_region }}
           SPACES_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
           SPACES_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
