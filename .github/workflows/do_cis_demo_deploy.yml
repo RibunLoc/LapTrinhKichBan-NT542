@@ -19,6 +19,10 @@ on:
         description: "Spaces bucket name prefix (bucket will be <prefix>-<run_id>)"
         required: true
         default: "cis-spaces"
+      extra_ssh_key_name:
+        description: "Optional: existing DigitalOcean SSH key name to ALSO attach to the droplet (so you can SSH after the workflow)"
+        required: false
+        default: ""
       enable_cdn:
         description: "Enable CDN for Spaces bucket"
         type: boolean
@@ -115,6 +119,16 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "id=$KEY_ID" >> "$GITHUB_OUTPUT"
 
+      - name: Build ssh_key_names for Terraform
+        id: ssh_keys
+        env:
+          EPHEMERAL_KEY_NAME: ${{ steps.do_sshkey.outputs.name }}
+          EXTRA_KEY_NAME: ${{ inputs.extra_ssh_key_name }}
+        run: |
+          JSON="$(jq -cn --arg a "$EPHEMERAL_KEY_NAME" --arg b "$EXTRA_KEY_NAME" 'if $b=="" then [$a] else [$a,$b] end')"
+          echo "json=$JSON" >> "$GITHUB_OUTPUT"
+          echo "Using ssh_key_names=$JSON"
+
       - name: Detect runner public IP (for SSH allowlist)
         id: ip
         run: |
@@ -135,7 +149,7 @@ jobs:
           TF_VAR_environment: ${{ inputs.environment }}
           TF_VAR_owner: team-ops
           TF_VAR_admin_cidrs: '["${{ steps.ip.outputs.ip }}/32"]'
-          TF_VAR_ssh_key_names: '["${{ steps.do_sshkey.outputs.name }}"]'
+          TF_VAR_ssh_key_names: ${{ steps.ssh_keys.outputs.json }}
           TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
           TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
           TF_VAR_spaces_expire_days: 30
@@ -192,7 +206,7 @@ jobs:
           TF_VAR_environment: ${{ inputs.environment }}
           TF_VAR_owner: team-ops
           TF_VAR_admin_cidrs: '["${{ steps.ip.outputs.ip }}/32"]'
-          TF_VAR_ssh_key_names: '["${{ steps.do_sshkey.outputs.name }}"]'
+          TF_VAR_ssh_key_names: ${{ steps.ssh_keys.outputs.json }}
           TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
           TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
           TF_VAR_spaces_expire_days: 30
