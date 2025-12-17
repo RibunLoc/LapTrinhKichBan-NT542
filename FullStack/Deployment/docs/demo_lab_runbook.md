@@ -79,6 +79,7 @@ Nếu bạn chạy trên GitHub Actions, mỗi lần run là runner mới nên *
 Workflow đã hỗ trợ backend DO Spaces qua các biến:
 - `TFSTATE_BUCKET` (bucket lưu state)
 - `TFSTATE_ENDPOINT` (vd: `https://sgp1.digitaloceanspaces.com`)
+- (S3-compatible) Terraform sẽ bật `skip_requesting_account_id` để không gọi AWS STS/IAM (Spaces không hỗ trợ).
 - Credentials: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (dùng Spaces key)
 
 Trên GitHub Actions, bạn chỉ cần nhập input `tfstate_bucket` (workflow tự tạo bucket nếu chưa có).
