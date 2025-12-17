@@ -73,6 +73,16 @@ cd FullStack/Deployment
 bash scripts/bash/run_full_cis_pipeline.sh
 ```
 
+## 6.1) Remote state backend (DO Spaces) để destroy ở run sau
+Nếu bạn chạy trên GitHub Actions, mỗi lần run là runner mới nên **local state sẽ mất**. Muốn chạy lại workflow chỉ để `terraform destroy` thì cần remote state.
+
+Workflow đã hỗ trợ backend DO Spaces qua các biến:
+- `TFSTATE_BUCKET` (bucket lưu state)
+- `TFSTATE_ENDPOINT` (vd: `https://sgp1.digitaloceanspaces.com`)
+- Credentials: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (dùng Spaces key)
+
+Trên GitHub Actions, bạn chỉ cần nhập input `tfstate_bucket` (workflow tự tạo bucket nếu chưa có).
+
 ## 7) Cleanup (optional)
 ```bash
 cd terraform/envs/demo

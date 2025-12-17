@@ -58,6 +58,7 @@ Workflow: `.github/workflows/do_cis_demo_deploy.yml`
 - Chạy: Terraform → Ansible → CIS controls
 - Upload artifacts: `FullStack/Deployment/logs/` và `FullStack/Deployment/reports/`
 - Có tuỳ chọn `destroy_after` để dọn hạ tầng (tiết kiệm chi phí)
+- Có `tfstate_bucket` để lưu Terraform state trên DO Spaces (giúp chạy lại workflow chỉ để destroy).
 
 ### Secrets cần tạo trong repo
 - `DO_ACCESS_TOKEN`

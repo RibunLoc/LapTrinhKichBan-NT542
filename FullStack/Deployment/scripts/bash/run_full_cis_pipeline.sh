@@ -9,6 +9,7 @@ cd "$ROOT_DIR"
 RUN_TS="$(date -u +%Y%m%d%H%M%S)"
 PIPELINE_LOG="$ROOT_DIR/logs/pipeline_${RUN_TS}.log"
 mkdir -p "$ROOT_DIR/logs" "$ROOT_DIR/reports"
+BACKEND_FILE=""
 
 log() { echo "[$(date --iso-8601=seconds)] [$1] ${*:2}" | tee -a "$PIPELINE_LOG" >&2; }
 
@@ -51,6 +52,13 @@ Environment (from .env):
   ENV_TAG=env:demo
   SSH_KEY_PATH, SSH_PORT
   (Spaces) SPACES_BUCKET, SPACES_REGION, SPACES_ENDPOINT, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY
+
+Remote state (optional, recommended for GitHub Actions re-runs):
+  TFSTATE_BUCKET=your-tfstate-bucket
+  TFSTATE_KEY=cis-demo/demo/terraform.tfstate   # optional
+  TFSTATE_ENDPOINT=https://sgp1.digitaloceanspaces.com  # optional
+  TFSTATE_REGION=us-east-1                      # optional
+  (Credentials via env) AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 
 Toggles:
   RUN_APPLY=1                # terraform apply (default 0 => plan only)
@@ -136,11 +144,60 @@ if [[ "$RUN_CIS" == "1" ]]; then
   require_bin bash
 fi
 
+tf_init() {
+  local tf_dir="$1"
+  local backend_bucket="${TFSTATE_BUCKET:-}"
+  local backend_key="${TFSTATE_KEY:-}"
+  local backend_region="${TFSTATE_REGION:-us-east-1}"
+  local backend_endpoint="${TFSTATE_ENDPOINT:-}"
+  local spaces_region=""
+  local env_name=""
+  local backend_file=""
+
+  if [[ -z "$backend_bucket" ]]; then
+    log "WARN" "TFSTATE_BUCKET is empty -> using local state (not persisted across GitHub Actions runs)"
+    terraform -chdir="$tf_dir" init -input=false -backend=false | tee -a "$PIPELINE_LOG"
+    return 0
+  fi
+
+  if [[ -z "$backend_endpoint" ]]; then
+    spaces_region="${TF_VAR_spaces_region:-${SPACES_REGION:-sgp1}}"
+    backend_endpoint="https://${spaces_region}.digitaloceanspaces.com"
+  fi
+
+  if [[ -z "$backend_key" ]]; then
+    env_name="${TF_VAR_environment:-demo}"
+    backend_key="cis-demo/${env_name}/terraform.tfstate"
+  fi
+
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    log "ERROR" "Remote backend enabled but AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY are missing"
+    exit 2
+  fi
+
+  backend_file="$(mktemp)"
+  BACKEND_FILE="$backend_file"
+
+  cat >"$backend_file" <<EOF
+bucket = "${backend_bucket}"
+key    = "${backend_key}"
+region = "${backend_region}"
+endpoint = "${backend_endpoint}"
+skip_credentials_validation = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+force_path_style            = true
+EOF
+
+  log "INFO" "Terraform init with DO Spaces backend (bucket=$backend_bucket key=$backend_key endpoint=$backend_endpoint)"
+  terraform -chdir="$tf_dir" init -input=false -reconfigure -backend-config="$backend_file" | tee -a "$PIPELINE_LOG"
+}
+
 log "INFO" "Pipeline log: $PIPELINE_LOG"
 log "INFO" "RUN_APPLY=$RUN_APPLY RUN_HARDEN=$RUN_HARDEN RUN_SECURITY_UPDATES=$RUN_SECURITY_UPDATES RUN_LUKS=$RUN_LUKS RUN_CIS=$RUN_CIS"
 
 log "INFO" "Terraform init ($TF_DIR)"
-terraform -chdir="$TF_DIR" init -input=false | tee -a "$PIPELINE_LOG"
+tf_init "$TF_DIR"
 
 log "INFO" "Terraform plan"
 terraform -chdir="$TF_DIR" plan -input=false "${TFVARS_ARG[@]}" | tee -a "$PIPELINE_LOG"
@@ -153,15 +210,38 @@ else
 fi
 
 log "INFO" "Reading droplet IP from terraform output"
-DROPLET_IP="$(terraform -chdir="$TF_DIR" output -raw droplet_ip 2>/dev/null || true)"
-if [[ -z "$DROPLET_IP" ]]; then
-  log "ERROR" "terraform output droplet_ip is empty"
-  exit 1
-fi
-log "INFO" "DROPLET_IP=$DROPLET_IP"
+raw_droplet_ip="$(terraform -chdir="$TF_DIR" output -raw droplet_ip 2>/dev/null || true)"
+raw_droplet_ip="${raw_droplet_ip//$'\r'/}"
+raw_droplet_ip="${raw_droplet_ip%%$'\n'*}"
 
-HOSTS="${HOSTS:-$DROPLET_IP}"
+DROPLET_IP=""
+if [[ "$raw_droplet_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+  DROPLET_IP="$raw_droplet_ip"
+else
+  if [[ -n "$raw_droplet_ip" ]]; then
+    log "WARN" "terraform output droplet_ip is not a valid IPv4 address (got: $raw_droplet_ip)"
+  else
+    log "WARN" "terraform output droplet_ip is empty"
+  fi
+fi
+
+if [[ -z "${HOSTS:-}" ]]; then
+  if [[ -n "$DROPLET_IP" ]]; then
+    HOSTS="$DROPLET_IP"
+  else
+    if [[ "$RUN_APPLY" != "1" ]]; then
+      log "WARN" "No droplet IP available (RUN_APPLY!=1 and terraform outputs missing). Skipping Ansible/CIS. Set RUN_APPLY=1 or HOSTS=\"ip1 ip2\" to continue."
+      exit 0
+    fi
+
+    log "ERROR" "No droplet IP available after apply. Check terraform state/outputs."
+    exit 1
+  fi
+fi
+
 export HOSTS
+log "INFO" "DROPLET_IP=${DROPLET_IP:-<unknown>}"
+log "INFO" "HOSTS=$HOSTS"
 
 SSH_PORT="${SSH_PORT:-22}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-}"
@@ -193,7 +273,7 @@ export SSH_STRICT_HOST_KEY_CHECKING="${SSH_STRICT_HOST_KEY_CHECKING:-no}"
 
 INV_ROOT="$(mktemp)"
 INV_DEVOPS="$(mktemp)"
-trap 'rm -f "$INV_ROOT" "$INV_DEVOPS"' EXIT
+trap 'rm -f "$INV_ROOT" "$INV_DEVOPS" "${BACKEND_FILE:-}"' EXIT
 
 if [[ "$RUN_HARDEN" == "1" ]]; then
   log "INFO" "Generating Ansible inventory (root) -> $INV_ROOT"

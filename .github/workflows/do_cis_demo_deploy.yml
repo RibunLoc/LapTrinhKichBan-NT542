@@ -19,6 +19,10 @@ on:
         description: "Spaces bucket name prefix (bucket will be <prefix>-<run_id>)"
         required: true
         default: "cis-spaces"
+      tfstate_bucket:
+        description: "Spaces bucket name for Terraform remote state (must be globally unique in Spaces)"
+        required: true
+        default: "cis-demo-tfstate"
       extra_ssh_key_name:
         description: "Optional: existing DigitalOcean SSH key name to ALSO attach to the droplet (so you can SSH after the workflow)"
         required: false
@@ -135,6 +139,15 @@ jobs:
           IP="$(curl -fsSL https://api.ipify.org)"
           echo "ip=$IP" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure Terraform state bucket exists (Spaces)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          TFSTATE_BUCKET: ${{ inputs.tfstate_bucket }}
+          TFSTATE_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
+        run: |
+          aws --endpoint-url "$TFSTATE_ENDPOINT" s3 mb "s3://$TFSTATE_BUCKET" || true
+
       - name: Run full pipeline (Terraform -> Ansible -> CIS)
         env:
           DO_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
@@ -155,6 +168,11 @@ jobs:
           TF_VAR_spaces_expire_days: 30
           TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
           TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
+
+          # Remote state backend (DO Spaces)
+          TFSTATE_BUCKET: ${{ inputs.tfstate_bucket }}
+          TFSTATE_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
+          TFSTATE_REGION: us-east-1
 
           # CIS script defaults
           ENV_TAG: env:${{ inputs.environment }}
@@ -212,6 +230,11 @@ jobs:
           TF_VAR_spaces_expire_days: 30
           TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
           TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
+
+          # Remote state backend (DO Spaces)
+          TFSTATE_BUCKET: ${{ inputs.tfstate_bucket }}
+          TFSTATE_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
+          TFSTATE_REGION: us-east-1
         run: |
           terraform -chdir=terraform/envs/demo destroy -auto-approve -input=false || true
 
