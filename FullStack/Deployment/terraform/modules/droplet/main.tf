@@ -45,8 +45,8 @@ variable "tags" {
 
 variable "user_data" {
   type        = string
-  description = "Cloud-init content"
-  default     = ""
+  description = "Cloud-init content (null disables user_data)"
+  default     = null
 }
 
 variable "backups" {
@@ -95,7 +95,7 @@ resource "digitalocean_droplet" "this" {
     for k in data.digitalocean_ssh_keys.find_keys.ssh_keys : k.id
   ]
   volume_ids = var.volume_ids
-  user_data  = var.user_data
+  user_data  = var.user_data == null || trimspace(var.user_data) == "" ? null : var.user_data
 }
 
 output "id" {
@@ -117,5 +117,4 @@ output "ssh_key_ids" {
 output "ssh_key_names" {
   value = [for k in data.digitalocean_ssh_keys.find_keys.ssh_keys : k.name]
 }
-
 

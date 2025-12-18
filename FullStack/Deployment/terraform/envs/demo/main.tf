@@ -43,7 +43,7 @@ module "droplet" {
   ssh_key_names = var.ssh_key_names
   tags          = concat(local.common_tags, ["role:web"])
   # Default: no user_data to avoid cloud-init races; Ansible will manage OS config.
-  user_data = var.enable_cloud_init ? file("${path.module}/../../../user_data/cloud_init_upgrade.yaml") : ""
+  user_data = var.enable_cloud_init ? file("${path.module}/../../../user_data/cloud_init_upgrade.yaml") : null
 }
 
 module "volume" {
