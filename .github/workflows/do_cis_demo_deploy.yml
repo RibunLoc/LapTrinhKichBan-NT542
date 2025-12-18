@@ -155,6 +155,7 @@ jobs:
 
       - name: Run full pipeline (Terraform -> Ansible -> CIS)
         if: ${{ !inputs.destroy_only }}
+        continue-on-error: true
         env:
           DO_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
@@ -233,6 +234,7 @@ jobs:
 
       - name: Destroy resources (optional)
         if: always() && (inputs.destroy_after || inputs.destroy_only)
+        continue-on-error: true
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
