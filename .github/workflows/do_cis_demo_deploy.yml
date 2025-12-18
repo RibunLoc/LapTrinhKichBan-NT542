@@ -214,6 +214,38 @@ jobs:
             FullStack/Deployment/logs
             FullStack/Deployment/reports
 
+      - name: Notify Slack (CIS summary)
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ENV_NAME: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          summary="$(ls -1t reports/cis_summary_*.json 2>/dev/null | head -n 1 || true)"
+
+          status="${{ job.status }}"
+          if [[ -z "$summary" ]]; then
+            text="DO CIS Demo (${ENV_NAME})\nStatus: ${status}\nRun: ${RUN_URL}\nNo cis_summary_*.json was generated. Check logs/artifacts."
+          else
+            pass="$(jq -r '.summary.pass' "$summary" 2>/dev/null || echo 0)"
+            fail="$(jq -r '.summary.fail' "$summary" 2>/dev/null || echo 0)"
+            warn="$(jq -r '.summary.warn' "$summary" 2>/dev/null || echo 0)"
+
+            failed_list="$(jq -r '.results[] | select(.status!="PASS") | "\(.control) \(.status) \(.script)"' "$summary" 2>/dev/null | head -n 20 || true)"
+            if [[ -n "$failed_list" ]]; then
+              failed_block="\nFailed/Warn (first 20):\n${failed_list}"
+            else
+              failed_block=""
+            fi
+
+            text="DO CIS Demo (${ENV_NAME})\nStatus: ${status}\nTotals: PASS=${pass} FAIL=${fail} WARN=${warn}\nRun: ${RUN_URL}${failed_block}"
+          fi
+
+          payload="$(jq -n --arg text "$text" '{text:$text}')"
+          curl -sS -X POST -H "Content-type: application/json" --data "$payload" "$SLACK_WEBHOOK_URL" >/dev/null
+
       - name: Destroy resources (optional)
         if: always() && inputs.destroy_after
         env:
