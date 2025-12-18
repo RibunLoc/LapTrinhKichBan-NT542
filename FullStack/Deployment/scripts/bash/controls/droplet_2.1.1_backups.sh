@@ -37,17 +37,42 @@ failed_entries=()
 for id in "${droplet_ids[@]}"; do
   # NOTE: `doctl compute droplet list` may omit backup-related fields depending on version.
   # Use `droplet get` for reliable backup/feature signals.
-  droplet_get_json="$(run_doctl_json compute droplet get "$id")"
-  droplet_obj="$(echo "$droplet_get_json" | jq -c 'if type=="array" then .[0] else . end')"
+  #
+  # Also: enabling backups can take a short time to propagate to API fields like
+  # `.features` and `.next_backup_window` right after droplet creation, so we retry.
+  BACKUPS_RETRY_COUNT="${BACKUPS_RETRY_COUNT:-5}"
+  BACKUPS_RETRY_SLEEP_SECONDS="${BACKUPS_RETRY_SLEEP_SECONDS:-10}"
 
-  name="$(echo "$droplet_obj" | jq -r '.name')"
-  features_csv="$(echo "$droplet_obj" | jq -r '(.features // []) | join(",")')"
+  droplet_obj=""
+  for attempt in $(seq 1 "$BACKUPS_RETRY_COUNT"); do
+    droplet_get_json="$(run_doctl_json compute droplet get "$id")"
+    droplet_obj="$(echo "$droplet_get_json" | jq -c 'if type=="array" then .[0] else . end')"
 
-  has_backups_feature="$(echo "$droplet_obj" | jq -r '((.features // []) | index("backups")) != null')"
-  has_next_window="$(echo "$droplet_obj" | jq -r '(.next_backup_window // null) != null')"
-  next_window_start="$(echo "$droplet_obj" | jq -r '(.next_backup_window.start // "")')"
+    name="$(echo "$droplet_obj" | jq -r '.name')"
+    features_csv="$(echo "$droplet_obj" | jq -r '(.features // []) | join(",")')"
 
-  if [[ "$has_backups_feature" != "true" && "$has_next_window" != "true" ]]; then
+    # Signals for backups enabled (any of these is enough):
+    # - "backups" appears in `.features`
+    # - `.next_backup_window` exists (scheduled)
+    # - `.backup_ids` has at least 1 entry (backups already created)
+    # - some doctl/API variants may expose `.backups` boolean
+    has_backups_feature="$(echo "$droplet_obj" | jq -r '((.features // []) | index("backups")) != null')"
+    has_next_window="$(echo "$droplet_obj" | jq -r '(.next_backup_window // null) != null')"
+    backup_ids_len="$(echo "$droplet_obj" | jq -r '(.backup_ids // []) | length')"
+    backups_bool="$(echo "$droplet_obj" | jq -r 'if has("backups") then (.backups|tostring) else "unknown" end')"
+    next_window_start="$(echo "$droplet_obj" | jq -r '(.next_backup_window.start // "")')"
+
+    if [[ "$has_backups_feature" == "true" || "$has_next_window" == "true" || "${backup_ids_len:-0}" -gt 0 || "$backups_bool" == "true" ]]; then
+      break
+    fi
+
+    if [[ "$attempt" -lt "$BACKUPS_RETRY_COUNT" ]]; then
+      log "WARN" "Droplet $name backups signals not visible yet (attempt=$attempt/$BACKUPS_RETRY_COUNT). Retrying in ${BACKUPS_RETRY_SLEEP_SECONDS}s..."
+      sleep "$BACKUPS_RETRY_SLEEP_SECONDS"
+    fi
+  done
+
+  if [[ "$has_backups_feature" != "true" && "$has_next_window" != "true" && "${backup_ids_len:-0}" -le 0 && "$backups_bool" != "true" ]]; then
     log "ERROR" "Droplet $name backups disabled (features=[$features_csv])"
     failed_entries+=("$(
       jq -n \
@@ -55,10 +80,12 @@ for id in "${droplet_ids[@]}"; do
         --arg droplet_id "$id" \
         --arg features "$features_csv" \
         --arg reason "Backups disabled" \
-        '{droplet:$droplet,droplet_id:($droplet_id|tonumber),reason:$reason,signals:{features:$features,has_backups_feature:false,has_next_backup_window:false,next_backup_window_start:null}}'
+        --arg backups_bool "$backups_bool" \
+        --argjson backup_ids_len "${backup_ids_len:-0}" \
+        '{droplet:$droplet,droplet_id:($droplet_id|tonumber),reason:$reason,signals:{features:$features,backups_field:$backups_bool,backup_ids_len:$backup_ids_len,has_backups_feature:false,has_next_backup_window:false,next_backup_window_start:null}}'
     )")
   else
-    log "INFO" "Droplet $name backups enabled (feature=$has_backups_feature next_window=$has_next_window start=${next_window_start:-none})"
+    log "INFO" "Droplet $name backups enabled (feature=$has_backups_feature next_window=$has_next_window backup_ids_len=${backup_ids_len:-0} backups_field=$backups_bool start=${next_window_start:-none})"
   fi
 done
 
