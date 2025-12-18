@@ -215,13 +215,18 @@ jobs:
             FullStack/Deployment/reports
 
       - name: Notify Slack (CIS summary)
-        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        if: always()
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ENV_NAME: ${{ inputs.environment }}
         run: |
           set -euo pipefail
+
+          if [[ -z "${SLACK_WEBHOOK_URL:-}" ]]; then
+            echo "SLACK_WEBHOOK_URL is not set. Skipping Slack notification."
+            exit 0
+          fi
 
           summary="$(ls -1t reports/cis_summary_*.json 2>/dev/null | head -n 1 || true)"
 
