@@ -53,6 +53,7 @@ module "volume" {
   size_gb     = var.volume_size_gb
   description = "CIS demo data volume"
   tags        = concat(local.common_tags, ["role:data"])
+  attach      = true
   droplet_id  = module.droplet.id
 }
 
