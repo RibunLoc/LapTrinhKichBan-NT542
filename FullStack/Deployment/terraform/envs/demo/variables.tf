@@ -34,6 +34,12 @@ variable "environment" {
   default     = "demo"
 }
 
+variable "enable_cloud_init" {
+  description = "Enable cloud-init user_data on droplet (Ansible will manage packages/config if false)"
+  type        = bool
+  default     = false
+}
+
 variable "owner" {
   description = "Owner/team"
   type        = string

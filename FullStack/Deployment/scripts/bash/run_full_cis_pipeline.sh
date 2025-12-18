@@ -15,6 +15,13 @@ log() { echo "[$(date --iso-8601=seconds)] [$1] ${*:2}" | tee -a "$PIPELINE_LOG"
 
 require_bin() { command -v "$1" >/dev/null 2>&1 || { log "ERROR" "Missing dependency: $1"; exit 2; }; }
 
+is_true() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|y|Y|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 wait_for_tcp() {
   local host="$1"
   local port="$2"
@@ -64,6 +71,7 @@ Toggles:
   RUN_APPLY=1                # terraform apply (default 0 => plan only)
   RUN_HARDEN=1               # run ansible/playbooks/01_harden.yml as root (default 1)
   RUN_SECURITY_UPDATES=1     # run ansible/security_updates.yml as devops (default 1)
+  RUN_SECURE_MOUNT_OPTS=1    # enforce /data mount opts (default 1)
   RUN_LUKS=0                 # run ansible/luks_volume.yml (default 0, destructive)
   CONFIRM_LUKS=0             # must be 1 if RUN_LUKS=1
   RUN_CIS=1                  # run scripts/bash/run_cis_controls.sh (default 1)
@@ -124,6 +132,7 @@ export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${SPACES_SECRET_ACCESS_KE
 RUN_APPLY="${RUN_APPLY:-0}"
 RUN_HARDEN="${RUN_HARDEN:-1}"
 RUN_SECURITY_UPDATES="${RUN_SECURITY_UPDATES:-1}"
+RUN_SECURE_MOUNT_OPTS="${RUN_SECURE_MOUNT_OPTS:-1}"
 RUN_LUKS="${RUN_LUKS:-0}"
 CONFIRM_LUKS="${CONFIRM_LUKS:-0}"
 RUN_CIS="${RUN_CIS:-1}"
@@ -195,7 +204,7 @@ EOF
 }
 
 log "INFO" "Pipeline log: $PIPELINE_LOG"
-log "INFO" "RUN_APPLY=$RUN_APPLY RUN_HARDEN=$RUN_HARDEN RUN_SECURITY_UPDATES=$RUN_SECURITY_UPDATES RUN_LUKS=$RUN_LUKS RUN_CIS=$RUN_CIS"
+log "INFO" "RUN_APPLY=$RUN_APPLY RUN_HARDEN=$RUN_HARDEN RUN_SECURITY_UPDATES=$RUN_SECURITY_UPDATES RUN_SECURE_MOUNT_OPTS=$RUN_SECURE_MOUNT_OPTS RUN_LUKS=$RUN_LUKS RUN_CIS=$RUN_CIS"
 
 log "INFO" "Terraform init ($TF_DIR)"
 tf_init "$TF_DIR"
@@ -266,52 +275,56 @@ for h in $HOSTS; do
   fi
 done
 
-# Wait for cloud-init completion to avoid racing apt/dpkg locks and ssh restarts.
-# Our droplet user_data enables package upgrades on first boot, which can take a while.
-CLOUD_INIT_WAIT_SECONDS="${CLOUD_INIT_WAIT_SECONDS:-600}"
-CLOUD_INIT_POLL_SECONDS="${CLOUD_INIT_POLL_SECONDS:-10}"
+WAIT_FOR_CLOUD_INIT="${WAIT_FOR_CLOUD_INIT:-${TF_VAR_enable_cloud_init:-0}}"
+if is_true "$WAIT_FOR_CLOUD_INIT"; then
+  # Wait for cloud-init completion to avoid racing apt/dpkg locks and ssh restarts.
+  CLOUD_INIT_WAIT_SECONDS="${CLOUD_INIT_WAIT_SECONDS:-600}"
+  CLOUD_INIT_POLL_SECONDS="${CLOUD_INIT_POLL_SECONDS:-10}"
 
-ssh_opts=(
-  -o BatchMode=yes
-  -o LogLevel=ERROR
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
-  -o ConnectTimeout=10
-  -o ServerAliveInterval=30
-  -o ServerAliveCountMax=10
-)
-if [[ -n "${SSH_KEY_PATH:-}" ]]; then
-  ssh_opts+=(-i "$SSH_KEY_PATH")
-fi
-if [[ -n "${SSH_PORT:-}" ]]; then
-  ssh_opts+=(-p "$SSH_PORT")
-fi
+  ssh_opts=(
+    -o BatchMode=yes
+    -o LogLevel=ERROR
+    -o StrictHostKeyChecking=no
+    -o UserKnownHostsFile=/dev/null
+    -o ConnectTimeout=10
+    -o ServerAliveInterval=30
+    -o ServerAliveCountMax=10
+  )
+  if [[ -n "${SSH_KEY_PATH:-}" ]]; then
+    ssh_opts+=(-i "$SSH_KEY_PATH")
+  fi
+  if [[ -n "${SSH_PORT:-}" ]]; then
+    ssh_opts+=(-p "$SSH_PORT")
+  fi
 
-wait_for_cloud_init() {
-  local host="$1"
-  local user="${2:-root}"
-  local target="${user}@${host}"
-  local deadline=$(( $(date +%s) + CLOUD_INIT_WAIT_SECONDS ))
+  wait_for_cloud_init() {
+    local host="$1"
+    local user="${2:-root}"
+    local target="${user}@${host}"
+    local deadline=$(( $(date +%s) + CLOUD_INIT_WAIT_SECONDS ))
 
-  log "INFO" "Waiting for cloud-init to finish on $target (timeout=${CLOUD_INIT_WAIT_SECONDS}s)"
-  while :; do
-    if ssh "${ssh_opts[@]}" "$target" "test -f /var/lib/cloud/instance/boot-finished" >/dev/null 2>&1; then
-      log "INFO" "cloud-init finished: $target"
-      return 0
-    fi
+    log "INFO" "Waiting for cloud-init to finish on $target (timeout=${CLOUD_INIT_WAIT_SECONDS}s)"
+    while :; do
+      if ssh "${ssh_opts[@]}" "$target" "test -f /var/lib/cloud/instance/boot-finished" >/dev/null 2>&1; then
+        log "INFO" "cloud-init finished: $target"
+        return 0
+      fi
 
-    if [[ $(date +%s) -ge $deadline ]]; then
-      log "WARN" "cloud-init did not finish before timeout on $target (continuing anyway)"
-      return 1
-    fi
-    sleep "$CLOUD_INIT_POLL_SECONDS"
+      if [[ $(date +%s) -ge $deadline ]]; then
+        log "WARN" "cloud-init did not finish before timeout on $target (continuing anyway)"
+        return 1
+      fi
+      sleep "$CLOUD_INIT_POLL_SECONDS"
+    done
+  }
+
+  for h in $HOSTS; do
+    # Prefer root before harden; if root login is disabled (rerun scenario) fall back to devops.
+    wait_for_cloud_init "$h" "root" || wait_for_cloud_init "$h" "${ANSIBLE_USER_POST_HARDEN:-devops}" || true
   done
-}
-
-for h in $HOSTS; do
-  # Prefer root before harden; if root login is disabled (rerun scenario) fall back to devops.
-  wait_for_cloud_init "$h" "root" || wait_for_cloud_init "$h" "${ANSIBLE_USER_POST_HARDEN:-devops}" || true
-done
+else
+  log "INFO" "Skipping cloud-init wait (WAIT_FOR_CLOUD_INIT=$WAIT_FOR_CLOUD_INIT)"
+fi
 
 # Avoid host key problems in Ansible (ephemeral demo droplets often reuse IPs)
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
@@ -351,6 +364,13 @@ if [[ "$RUN_LUKS" == "1" ]]; then
   ansible-playbook -i "$INV_DEVOPS" ansible/luks_volume.yml -e "luks_device=${LUKS_DEVICE:-/dev/disk/by-id/scsi-0DO_Volume_demo-data} luks_name=${LUKS_NAME:-securedata} mount_point=${MOUNT_POINT:-/data} luks_passphrase=${LUKS_PASSPHRASE:-ChangeMeLabOnly}" | tee -a "$PIPELINE_LOG"
 else
   log "INFO" "Skipping LUKS (RUN_LUKS=0)"
+fi
+
+if [[ "$RUN_SECURE_MOUNT_OPTS" == "1" ]]; then
+  log "INFO" "Ensuring secure mount options (/data)"
+  ansible-playbook -i "$INV_DEVOPS" ansible/secure_mount_options.yml | tee -a "$PIPELINE_LOG"
+else
+  log "WARN" "RUN_SECURE_MOUNT_OPTS!=1 -> skipping secure mount options"
 fi
 
 if [[ "$RUN_CIS" == "1" ]]; then

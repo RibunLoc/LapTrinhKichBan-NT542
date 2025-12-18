@@ -1,0 +1,38 @@
+- name: Ensure secure mount options for data mount
+  hosts: droplet_cis
+  become: yes
+  vars:
+    mount_point: "/data"
+    secure_mount_opts: "defaults,noexec,nodev,nosuid"
+
+  tasks:
+    - name: Read fstab entry for mount point
+      ansible.builtin.shell: "awk '$2==\"{{ mount_point }}\"{print $1\" \" $3; exit}' /etc/fstab || true"
+      register: fstab_entry
+      changed_when: false
+
+    - name: Parse fstab src and fstype
+      ansible.builtin.set_fact:
+        fstab_src: "{{ (fstab_entry.stdout.split() | first) | default('') }}"
+        fstab_fstype: "{{ (fstab_entry.stdout.split() | last) | default('') }}"
+
+    - name: Warn when mount point missing in /etc/fstab
+      ansible.builtin.debug:
+        msg: "No /etc/fstab entry found for {{ mount_point }}; skipping secure mount opts."
+      when: fstab_src == "" or fstab_fstype == ""
+
+    - name: Ensure mount point directory exists
+      ansible.builtin.file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: "0755"
+      when: fstab_src != "" and fstab_fstype != ""
+
+    - name: Ensure secure mount options in fstab and remount
+      ansible.builtin.mount:
+        path: "{{ mount_point }}"
+        src: "{{ fstab_src }}"
+        fstype: "{{ fstab_fstype }}"
+        opts: "{{ secure_mount_opts }}"
+        state: mounted
+      when: fstab_src != "" and fstab_fstype != ""

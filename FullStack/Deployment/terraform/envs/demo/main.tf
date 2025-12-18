@@ -34,15 +34,16 @@ module "vpc" {
 
 module "droplet" {
   source = "../../modules/droplet"
-  
-  name        = "${var.environment}-vm"
-  region      = var.region
-  size        = var.droplet_size
-  image       = var.droplet_image
-  vpc_uuid    = module.vpc.id
+
+  name          = "${var.environment}-vm"
+  region        = var.region
+  size          = var.droplet_size
+  image         = var.droplet_image
+  vpc_uuid      = module.vpc.id
   ssh_key_names = var.ssh_key_names
-  tags        = concat(local.common_tags, ["role:web"])
-  user_data   = file("${path.module}/../../../user_data/cloud_init_upgrade.yaml")
+  tags          = concat(local.common_tags, ["role:web"])
+  # Default: no user_data to avoid cloud-init races; Ansible will manage OS config.
+  user_data = var.enable_cloud_init ? file("${path.module}/../../../user_data/cloud_init_upgrade.yaml") : ""
 }
 
 module "volume" {
@@ -60,24 +61,24 @@ module "volume" {
 module "firewall" {
   source = "../../modules/firewall"
 
-  name         = "${var.environment}-fw"
-  droplet_ids  = [module.droplet.id]
-  tags         = local.common_tags
-  admin_cidrs  = var.admin_cidrs
-  allow_http   = true
-  allow_https  = true
+  name        = "${var.environment}-fw"
+  droplet_ids = [module.droplet.id]
+  tags        = local.common_tags
+  admin_cidrs = var.admin_cidrs
+  allow_http  = true
+  allow_https = true
 }
 
 module "spaces" {
   source = "../../modules/spaces"
 
-  name               = var.spaces_bucket_name
-  region             = var.spaces_region
-  expiration_days    = var.spaces_expire_days
+  name                 = var.spaces_bucket_name
+  region               = var.spaces_region
+  expiration_days      = var.spaces_expire_days
   cors_allowed_origins = ["*"]
-  enable_cdn         = var.enable_cdn
-  cdn_ttl_seconds    = var.cdn_ttl_seconds
-  cdn_custom_domain  = var.cdn_custom_domain
+  enable_cdn           = var.enable_cdn
+  cdn_ttl_seconds      = var.cdn_ttl_seconds
+  cdn_custom_domain    = var.cdn_custom_domain
 }
 
 resource "digitalocean_monitor_alert" "cpu_high" {

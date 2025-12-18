@@ -173,6 +173,7 @@ jobs:
           TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
           TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
           TF_VAR_spaces_expire_days: 30
+          TF_VAR_enable_cloud_init: "false"
           TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
           TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
 
@@ -188,6 +189,7 @@ jobs:
           SSH_PORT: "22"
           SSH_USER: devops
           SSH_USER_FALLBACK: root
+          WAIT_FOR_CLOUD_INIT: "0"
 
           # Spaces checks
           SPACES_BUCKET: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
@@ -203,6 +205,7 @@ jobs:
           RUN_APPLY: ${{ inputs.run_apply && '1' || '0' }}
           RUN_HARDEN: ${{ inputs.run_harden && '1' || '0' }}
           RUN_SECURITY_UPDATES: ${{ inputs.run_security_updates && '1' || '0' }}
+          RUN_SECURE_MOUNT_OPTS: "1"
           RUN_LUKS: ${{ inputs.run_luks && '1' || '0' }}
           CONFIRM_LUKS: ${{ inputs.confirm_luks && '1' || '0' }}
           RUN_CIS: "1"
@@ -252,6 +255,7 @@ jobs:
           TF_VAR_spaces_bucket_name: '${{ inputs.spaces_bucket_prefix }}-${{ github.run_id }}'
           TF_VAR_enable_cdn: ${{ inputs.enable_cdn }}
           TF_VAR_spaces_expire_days: 30
+          TF_VAR_enable_cloud_init: "false"
           TF_VAR_slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
           TF_VAR_alert_emails: ${{ secrets.ALERT_EMAILS_JSON != '' && secrets.ALERT_EMAILS_JSON || '[]' }}
 

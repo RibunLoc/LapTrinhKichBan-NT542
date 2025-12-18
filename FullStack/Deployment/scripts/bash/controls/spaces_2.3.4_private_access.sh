@@ -43,7 +43,7 @@ acl_json=$(aws s3api get-bucket-acl --bucket "$SPACES_BUCKET" --endpoint-url "$S
 public_grants=$(echo "$acl_json" | jq '
   [
     (.Grants // [])[]?
-    | select(.Grantee.URI? | test("AllUsers|AuthenticatedUsers"))
+    | select(((.Grantee.URI? // "") | test("AllUsers|AuthenticatedUsers")))
   ] | length
 ')
 
@@ -110,4 +110,3 @@ if [[ "$pass" != "true" ]]; then
 fi
 
 echo "PASS [$CONTROL_ID] Bucket access is restricted (private)"
-

@@ -8,6 +8,7 @@ spaces_region      = "sgp1"
 admin_cidrs        = ["1.2.3.4/32"]
 owner              = "team-ops"
 environment        = "demo"
+enable_cloud_init  = false
 cdn_custom_domain  = ""
 alert_emails       = ["security@example.com"]
 slack_webhook_url  = "https://hooks.slack.com/services/XXX/YYY/ZZZ"

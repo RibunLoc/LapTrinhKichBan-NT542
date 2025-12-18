@@ -55,6 +55,7 @@
         path: "{{ mount_point }}"
         src: "/dev/mapper/{{ luks_name }}"
         fstype: ext4
+        opts: "defaults,noexec,nodev,nosuid"
         state: mounted
 
     - name: Ghi vào /etc/crypttab để auto open sau reboot
@@ -68,5 +69,5 @@
         path: "{{ mount_point }}"
         src: "/dev/mapper/{{ luks_name }}"
         fstype: ext4
-        opts: defaults
+        opts: "defaults,noexec,nodev,nosuid"
         state: present
