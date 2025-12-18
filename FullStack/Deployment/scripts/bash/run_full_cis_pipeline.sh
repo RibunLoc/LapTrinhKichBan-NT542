@@ -266,9 +266,56 @@ for h in $HOSTS; do
   fi
 done
 
+# Wait for cloud-init completion to avoid racing apt/dpkg locks and ssh restarts.
+# Our droplet user_data enables package upgrades on first boot, which can take a while.
+CLOUD_INIT_WAIT_SECONDS="${CLOUD_INIT_WAIT_SECONDS:-600}"
+CLOUD_INIT_POLL_SECONDS="${CLOUD_INIT_POLL_SECONDS:-10}"
+
+ssh_opts=(
+  -o BatchMode=yes
+  -o LogLevel=ERROR
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=10
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=10
+)
+if [[ -n "${SSH_KEY_PATH:-}" ]]; then
+  ssh_opts+=(-i "$SSH_KEY_PATH")
+fi
+if [[ -n "${SSH_PORT:-}" ]]; then
+  ssh_opts+=(-p "$SSH_PORT")
+fi
+
+wait_for_cloud_init() {
+  local host="$1"
+  local user="${2:-root}"
+  local target="${user}@${host}"
+  local deadline=$(( $(date +%s) + CLOUD_INIT_WAIT_SECONDS ))
+
+  log "INFO" "Waiting for cloud-init to finish on $target (timeout=${CLOUD_INIT_WAIT_SECONDS}s)"
+  while :; do
+    if ssh "${ssh_opts[@]}" "$target" "test -f /var/lib/cloud/instance/boot-finished" >/dev/null 2>&1; then
+      log "INFO" "cloud-init finished: $target"
+      return 0
+    fi
+
+    if [[ $(date +%s) -ge $deadline ]]; then
+      log "WARN" "cloud-init did not finish before timeout on $target (continuing anyway)"
+      return 1
+    fi
+    sleep "$CLOUD_INIT_POLL_SECONDS"
+  done
+}
+
+for h in $HOSTS; do
+  # Prefer root before harden; if root login is disabled (rerun scenario) fall back to devops.
+  wait_for_cloud_init "$h" "root" || wait_for_cloud_init "$h" "${ANSIBLE_USER_POST_HARDEN:-devops}" || true
+done
+
 # Avoid host key problems in Ansible (ephemeral demo droplets often reuse IPs)
 export ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-False}"
-export ANSIBLE_SSH_COMMON_ARGS="${ANSIBLE_SSH_COMMON_ARGS:- -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null }"
+export ANSIBLE_SSH_COMMON_ARGS="${ANSIBLE_SSH_COMMON_ARGS:- -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=no -o ControlPersist=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 }"
 # Also apply the same relaxed host-key behaviour to SSH-based CIS controls.
 export SSH_STRICT_HOST_KEY_CHECKING="${SSH_STRICT_HOST_KEY_CHECKING:-no}"
 
