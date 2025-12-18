@@ -1,8 +1,8 @@
 #cloud-config
-package_update: true
-package_upgrade: true
+package_update: false
+package_upgrade: false
 runcmd:
-  - echo "Cloud-init ensures system packages are upgraded before Ansible runs" > /var/log/cloud-init-upgrade.log
+  - echo "Cloud-init: skip apt upgrade (Ansible will manage packages)" > /var/log/cloud-init-upgrade.log
 
 # Check logs after boot
 # cat /var/log/cloud-init-output.log
