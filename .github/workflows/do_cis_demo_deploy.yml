@@ -67,6 +67,11 @@ on:
         type: boolean
         required: true
         default: false
+      destroy_only:
+        description: "Only run terraform destroy using remote state (skip apply/ansible/cis)"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -149,6 +154,7 @@ jobs:
           aws --endpoint-url "$TFSTATE_ENDPOINT" s3 mb "s3://$TFSTATE_BUCKET" || true
 
       - name: Run full pipeline (Terraform -> Ansible -> CIS)
+        if: ${{ !inputs.destroy_only }}
         env:
           DO_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
           DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DO_ACCESS_TOKEN }}
@@ -226,7 +232,7 @@ jobs:
           bash scripts/bash/slack_notify.sh
 
       - name: Destroy resources (optional)
-        if: always() && inputs.destroy_after
+        if: always() && (inputs.destroy_after || inputs.destroy_only)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
