@@ -182,12 +182,12 @@ tf_init() {
 bucket = "${backend_bucket}"
 key    = "${backend_key}"
 region = "${backend_region}"
-endpoint = "${backend_endpoint}"
+endpoints = { s3 = "${backend_endpoint}" }
 skip_credentials_validation = true
 skip_metadata_api_check     = true
 skip_region_validation      = true
 skip_requesting_account_id  = true
-force_path_style            = true
+use_path_style              = true
 EOF
 
   log "INFO" "Terraform init with DO Spaces backend (bucket=$backend_bucket key=$backend_key endpoint=$backend_endpoint)"

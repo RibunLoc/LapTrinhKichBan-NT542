@@ -35,13 +35,30 @@ fi
 
 failed_entries=()
 for id in "${droplet_ids[@]}"; do
-  name=$(echo "$droplets_json" | jq -r ".[] | select(.id == $id) | .name")
-  has_backups=$(echo "$droplets_json" | jq -r ".[] | select(.id == $id) | (.features // []) | index(\"backups\")")
-  if [[ "$has_backups" == "null" ]]; then
-    log "ERROR" "Droplet $name backups disabled"
-    failed_entries+=("$(jq -n --arg droplet "$name" --arg reason "Backups disabled" '{droplet:$droplet,reason:$reason}')")
+  # NOTE: `doctl compute droplet list` may omit backup-related fields depending on version.
+  # Use `droplet get` for reliable backup/feature signals.
+  droplet_get_json="$(run_doctl_json compute droplet get "$id")"
+  droplet_obj="$(echo "$droplet_get_json" | jq -c 'if type=="array" then .[0] else . end')"
+
+  name="$(echo "$droplet_obj" | jq -r '.name')"
+  features_csv="$(echo "$droplet_obj" | jq -r '(.features // []) | join(",")')"
+
+  has_backups_feature="$(echo "$droplet_obj" | jq -r '((.features // []) | index("backups")) != null')"
+  has_next_window="$(echo "$droplet_obj" | jq -r '(.next_backup_window // null) != null')"
+  next_window_start="$(echo "$droplet_obj" | jq -r '(.next_backup_window.start // "")')"
+
+  if [[ "$has_backups_feature" != "true" && "$has_next_window" != "true" ]]; then
+    log "ERROR" "Droplet $name backups disabled (features=[$features_csv])"
+    failed_entries+=("$(
+      jq -n \
+        --arg droplet "$name" \
+        --arg droplet_id "$id" \
+        --arg features "$features_csv" \
+        --arg reason "Backups disabled" \
+        '{droplet:$droplet,droplet_id:($droplet_id|tonumber),reason:$reason,signals:{features:$features,has_backups_feature:false,has_next_backup_window:false,next_backup_window_start:null}}'
+    )")
   else
-    log "INFO" "Droplet $name backups enabled"
+    log "INFO" "Droplet $name backups enabled (feature=$has_backups_feature next_window=$has_next_window start=${next_window_start:-none})"
   fi
 done
 

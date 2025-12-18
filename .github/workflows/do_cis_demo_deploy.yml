@@ -171,6 +171,7 @@ jobs:
 
           # Remote state backend (DO Spaces)
           TFSTATE_BUCKET: ${{ inputs.tfstate_bucket }}
+          TFSTATE_KEY: cis-demo/${{ inputs.environment }}/terraform.tfstate
           TFSTATE_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
           TFSTATE_REGION: us-east-1
 
@@ -227,6 +228,10 @@ jobs:
       - name: Destroy resources (optional)
         if: always() && inputs.destroy_after
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: "true"
+
           TF_VAR_do_token: ${{ secrets.DO_ACCESS_TOKEN }}
           TF_VAR_spaces_access_id: ${{ secrets.SPACES_ACCESS_KEY_ID }}
           TF_VAR_spaces_secret_key: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
@@ -244,9 +249,25 @@ jobs:
 
           # Remote state backend (DO Spaces)
           TFSTATE_BUCKET: ${{ inputs.tfstate_bucket }}
+          TFSTATE_KEY: cis-demo/${{ inputs.environment }}/terraform.tfstate
           TFSTATE_ENDPOINT: 'https://${{ inputs.spaces_region }}.digitaloceanspaces.com'
           TFSTATE_REGION: us-east-1
         run: |
+          set -euo pipefail
+          backend_file="$(mktemp)"
+          cat >"$backend_file" <<EOF
+          bucket = "${TFSTATE_BUCKET}"
+          key    = "${TFSTATE_KEY}"
+          region = "${TFSTATE_REGION}"
+          endpoints = { s3 = "${TFSTATE_ENDPOINT}" }
+          skip_credentials_validation = true
+          skip_metadata_api_check     = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          use_path_style              = true
+          EOF
+
+          terraform -chdir=terraform/envs/demo init -input=false -reconfigure -backend-config="$backend_file"
           terraform -chdir=terraform/envs/demo destroy -auto-approve -input=false || true
 
       - name: Cleanup DigitalOcean SSH key (always)
